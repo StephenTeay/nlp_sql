@@ -1,8 +1,7 @@
 streamlit
-langchain-gemini
-langchain-community
 langchain-core
-pandas 
-pymysql 
-pydantic 
-chromadb
+langchain-google-genai
+langchain-community
+langchain-chroma
+pandas
+pymysql
