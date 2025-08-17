@@ -16,7 +16,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 
 # --- Configuration and Initialization ---
 
-Check for required secrets (only need API keys now)
+#Check for required secrets (only need API keys now)
 if "GEMINI_API_KEY" not in st.secrets:
     st.error("Missing GEMINI_API_KEY. Please check your .streamlit/secrets.toml file.")
     st.stop()
