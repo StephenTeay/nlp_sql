@@ -1,7 +1,28 @@
-streamlit
-langchain-core
-langchain-google-genai
-langchain-community
-langchain-chroma
-pandas
-pymysql
+# Core web framework
+streamlit>=1.28.0
+
+# Data manipulation
+pandas>=2.0.0
+
+# LangChain core packages
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.0.20
+
+# Google Generative AI integration
+langchain-google-genai>=1.0.0
+
+# Vector store and embeddings
+chromadb>=0.4.0
+
+# Database connectivity
+SQLAlchemy>=2.0.0
+PyMySQL>=1.1.0
+
+# Additional dependencies that might be needed
+pydantic>=1.10.0
+typing-extensions>=4.5.0
+
+# Optional: For better performance and additional features
+faiss-cpu>=1.7.4
+tiktoken>=0.5.0
