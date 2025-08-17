@@ -17,9 +17,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 # --- Configuration and Initialization ---
 
 # Check for required secrets (only need API keys now)
-if "GEMINI_API_KEY" not in st.secrets:
-    st.error("Missing GEMINI_API_KEY. Please check your .streamlit/secrets.toml file.")
-    st.stop()
+# if "GEMINI_API_KEY" not in st.secrets:
+#     st.error("Missing GEMINI_API_KEY. Please check your .streamlit/secrets.toml file.")
+#     st.stop()
 
 # Set environment variables from Streamlit secrets
 os.environ["GEMINI_API_KEY"] = "AIzaSyBw8VP3fq87yk9LOGaC72RUSGPmdx3y5Xo"
