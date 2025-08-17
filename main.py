@@ -5,6 +5,8 @@ import sqlite3
 import tempfile
 import time
 import re
+import threading
+
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from langchain_core.prompts import PromptTemplate
 from langchain_community.chat_message_histories import ChatMessageHistory
@@ -36,27 +38,34 @@ if 'llm' not in st.session_state:
 if 'history' not in st.session_state:
     st.session_state.history = ChatMessageHistory()
 
+# A class to hold the result of the LLM call
+class LLMResult:
+    def __init__(self):
+        self.content = None
+        self.error = None
+
+def _run_llm_in_thread(llm, prompt, result_container):
+    """Target function for the thread to run the LLM call."""
+    try:
+        llm_response = llm.invoke(prompt)
+        result_container.content = llm_response.content
+    except Exception as e:
+        result_container.error = e
+
 # --- Helper Functions ---
 
 def create_database_from_csv_files(csv_files):
     """Create SQLite database from uploaded CSV files"""
-    # Create temporary database
     db_path = tempfile.mktemp(suffix='.db')
     conn = sqlite3.connect(db_path)
     
     table_info = ""
     
     for csv_file in csv_files:
-        # Read CSV
         df = pd.read_csv(csv_file)
-        
-        # Clean table name (remove extension and special characters)
         table_name = re.sub(r'[^a-zA-Z0-9_]', '_', csv_file.name.split('.')[0].lower())
-        
-        # Save to SQLite
         df.to_sql(table_name, conn, if_exists='replace', index=False)
         
-        # Generate table info
         table_info += f"Table Name: {table_name}\n"
         table_info += f"Columns: {', '.join(df.columns.tolist())}\n"
         table_info += f"Sample Data: {df.head(2).to_dict('records')}\n\n"
@@ -66,23 +75,17 @@ def create_database_from_csv_files(csv_files):
 
 def create_database_from_excel(excel_file):
     """Create SQLite database from uploaded Excel file"""
-    # Create temporary database
     db_path = tempfile.mktemp(suffix='.db')
     conn = sqlite3.connect(db_path)
     
-    # Read all sheets
     excel_data = pd.read_excel(excel_file, sheet_name=None)
     
     table_info = ""
     
     for sheet_name, df in excel_data.items():
-        # Clean table name
         table_name = re.sub(r'[^a-zA-Z0-9_]', '_', sheet_name.lower())
-        
-        # Save to SQLite
         df.to_sql(table_name, conn, if_exists='replace', index=False)
         
-        # Generate table info
         table_info += f"Table Name: {table_name} (from sheet: {sheet_name})\n"
         table_info += f"Columns: {', '.join(df.columns.tolist())}\n"
         table_info += f"Sample Data: {df.head(2).to_dict('records')}\n\n"
@@ -94,10 +97,8 @@ def execute_sql_file(sql_file, db_path):
     """Execute SQL file against the database"""
     conn = sqlite3.connect(db_path)
     
-    # Read SQL file content
     sql_content = sql_file.read().decode('utf-8')
     
-    # Split SQL statements (simple approach)
     statements = [stmt.strip() for stmt in sql_content.split(';') if stmt.strip()]
     
     results = []
@@ -116,7 +117,6 @@ def execute_sql_file(sql_file, db_path):
     conn.close()
     return '\n'.join(results)
 
-# Fallback query generation without LLM
 def generate_fallback_query(question, available_tables):
     question_lower = question.lower()
     
@@ -125,7 +125,6 @@ def generate_fallback_query(question, available_tables):
     
     first_table = available_tables[0]
     
-    # Simple rule-based query generation
     if any(word in question_lower for word in ['count', 'how many', 'number']):
         return f"SELECT COUNT(*) as count FROM {first_table};"
     elif any(word in question_lower for word in ['show', 'display', 'see', 'what']):
@@ -139,16 +138,13 @@ def generate_fallback_query(question, available_tables):
     else:
         return f"SELECT * FROM {first_table} LIMIT 5;"
 
-# Process question function with fallback SQL generation
 def process_question(question: str, db, table_info):
     try:
         st.write("🔍 Step 1: Preparing query...")
         
-        # Get available tables directly from database
         available_tables = db.get_usable_table_names()
         st.write(f"📋 Found tables: {available_tables}")
         
-        # Try to get sample data from first table
         sample_data = ""
         if available_tables:
             try:
@@ -163,32 +159,35 @@ def process_question(question: str, db, table_info):
         
         generated_query = None
         
-        # Try LLM with very short timeout
-        try:
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
-                temperature=0.0,
-                max_output_tokens=100,
-                timeout=10
-            )
-            
-            simple_prompt = f"""Create a SQLite query for: {question}
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            temperature=0.0,
+            max_output_tokens=100,
+        )
+        
+        simple_prompt = f"""Create a SQLite query for: {question}
 Tables: {', '.join(available_tables)}
 {sample_data[:200]}
 Query:"""
+        
+        st.write("📡 Making LLM request (15s timeout)...")
+        
+        result_container = LLMResult()
+        thread = threading.Thread(target=_run_llm_in_thread, args=(llm, simple_prompt, result_container))
+        thread.start()
+        thread.join(timeout=15)
+
+        if thread.is_alive():
+            st.warning(f"LLM request timed out, using rule-based approach.")
+            generated_query = generate_fallback_query(question, available_tables)
+            st.write(f"🔧 Generated fallback query")
+        elif result_container.error:
+            st.warning(f"LLM failed with error ({str(result_container.error)[:50]}...), using rule-based approach.")
+            generated_query = generate_fallback_query(question, available_tables)
+            st.write(f"🔧 Generated fallback query")
+        else:
+            generated_query = result_container.content.strip()
             
-            st.write("📡 Making LLM request (10s timeout)...")
-            
-            # Add manual timeout
-            start_time = time.time()
-            llm_response = llm.invoke(simple_prompt)
-            
-            if time.time() - start_time > 15:
-                raise Exception("Manual timeout")
-                
-            generated_query = llm_response.content.strip()
-            
-            # Clean up the query
             if "```" in generated_query:
                 generated_query = generated_query.split("```")[1].strip()
                 if generated_query.startswith("sql"):
@@ -196,28 +195,18 @@ Query:"""
             
             st.write("✅ LLM generated query successfully")
             
-        except Exception as e:
-            st.warning(f"LLM failed ({str(e)[:50]}...), using rule-based approach")
-            
-            # Fallback: Rule-based query generation
-            generated_query = generate_fallback_query(question, available_tables)
-            st.write(f"🔧 Generated fallback query")
-        
         st.write(f"📝 Query to execute: {generated_query}")
         
         st.write("🔧 Step 3: Executing query...")
         
-        # Execute query with timeout
         try:
-            # Try LangChain tool first
             execute_query_tool = QuerySQLDatabaseTool(db=db)
             query_results = execute_query_tool.invoke({"query": generated_query})
             st.write("✅ Query executed successfully")
-            
+        
         except Exception as e:
             st.warning(f"LangChain execution failed, trying direct SQLite...")
             
-            # Direct SQLite execution as fallback
             try:
                 db_path = db.database_uri.replace('sqlite:///', '')
                 conn = sqlite3.connect(db_path, timeout=10.0)
@@ -225,20 +214,18 @@ Query:"""
                 query_results = cursor.fetchall()
                 conn.close()
                 st.write("✅ Direct SQLite execution successful")
-                
+            
             except Exception as e2:
                 st.error(f"Both execution methods failed: {e2}")
                 query_results = f"Error: {e2}"
         
         st.write("💭 Step 4: Formatting results...")
         
-        # Simple result formatting
         if isinstance(query_results, str) and "Error" in query_results:
             final_answer = f"❌ Query execution failed: {query_results}"
         elif not query_results:
             final_answer = "No results found for your query."
         else:
-            # Format results nicely
             if isinstance(query_results, list) and len(query_results) > 0:
                 final_answer = f"📊 **Results for '{question}':**\n\n"
                 if len(query_results) <= 10:
@@ -360,14 +347,12 @@ if db_path and db_path not in st.session_state.get('processed_files', set()):
         st.session_state.db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
         st.session_state.table_info = table_info
         
-        # Keep track of processed files to avoid re-processing
         if 'processed_files' not in st.session_state:
             st.session_state.processed_files = set()
         st.session_state.processed_files.add(db_path)
         
         st.success("🎉 Database ready! You can now ask questions.")
         
-        # Show available tables
         try:
             available_tables = st.session_state.db.get_usable_table_names()
             st.info(f"📋 Available tables: {', '.join(available_tables)}")
@@ -393,14 +378,11 @@ if 'db' in st.session_state:
     user_question = st.chat_input("Ask a question about your data...")
     
     if user_question:
-        # Add user question to history
         st.session_state.history.add_user_message(user_question)
         with st.chat_message("user"):
             st.markdown(user_question)
 
-        # Process the question
         with st.chat_message("assistant"):
-            # Create a placeholder for step-by-step updates
             status_placeholder = st.empty()
             
             try:
@@ -412,16 +394,12 @@ if 'db' in st.session_state:
                     st.session_state.table_info
                 )
                 
-                # Clear status and show final response
                 status_placeholder.empty()
                 
-                # Display the response
                 st.markdown(response)
 
-                # Add response to history
                 st.session_state.history.add_ai_message(response)
                 
-                # Show details in expander
                 with st.expander("🔍 Show Details"):
                     st.subheader("Generated SQL Query")
                     st.code(generated_query, language="sql")
@@ -435,7 +413,6 @@ if 'db' in st.session_state:
                 st.error(error_msg)
                 st.session_state.history.add_ai_message(error_msg)
                 
-                # Show debug info
                 with st.expander("🐛 Debug Information"):
                     st.write("Database tables:", st.session_state.db.get_usable_table_names())
                     st.write("Table info available:", bool(st.session_state.table_info))
