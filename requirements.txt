@@ -13,7 +13,7 @@ langchain-community>=0.0.20
 langchain-google-genai>=1.0.0
 
 # Vector store and embeddings
-chromadb>=0.4.0
+nest-asyncio>=1.5.0
 
 # Output parsers
 langchain-core>=0.1.0
