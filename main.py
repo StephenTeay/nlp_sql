@@ -1,12 +1,10 @@
-
 import streamlit as st
 import pandas as pd
 import os
 import sqlite3
 import tempfile
-import time
 import re
-import threading
+import traceback
 
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from langchain_core.prompts import PromptTemplate
@@ -16,42 +14,20 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 
 # --- Configuration and Initialization ---
 
-#Check for required secrets (only need API keys now)
-if "GEMINI_API_KEY" not in st.secrets:
-    st.error("Missing GEMINI_API_KEY. Please check your .streamlit/secrets.toml file.")
+# Check for required secrets
+if "GOOGLE_API_KEY" not in st.secrets:
+    st.error("Missing GOOGLE_API_KEY. Please check your .streamlit/secrets.toml file.")
     st.stop()
 
 # Set environment variables from Streamlit secrets
-os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 if "LANGCHAIN_API_KEY" in st.secrets:
     os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
-# Initialize LLM and embedding model in session state
-if 'llm' not in st.session_state:
-    st.session_state.llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-pro",
-        temperature=0.0,
-        max_output_tokens=1024
-    )
-
 # Initialize chat history
 if 'history' not in st.session_state:
     st.session_state.history = ChatMessageHistory()
-
-# A class to hold the result of the LLM call
-class LLMResult:
-    def __init__(self):
-        self.content = None
-        self.error = None
-
-def _run_llm_in_thread(llm, prompt, result_container):
-    """Target function for the thread to run the LLM call."""
-    try:
-        llm_response = llm.invoke(prompt)
-        result_container.content = llm_response.content
-    except Exception as e:
-        result_container.error = e
 
 # --- Helper Functions ---
 
@@ -156,14 +132,14 @@ def process_question(question: str, db, table_info):
             except:
                 st.write("⚠️ Could not get sample data")
         
-        st.write("🤖 Step 2: Generating SQL (trying LLM with timeout)...")
-        
-        generated_query = None
+        st.write("🤖 Step 2: Generating SQL...")
         
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-pro",
+            model="gemini-1.5-flash",  # Updated model
             temperature=0.0,
             max_output_tokens=100,
+            google_api_key=st.secrets["GOOGLE_API_KEY"],
+            client_options={"api_endpoint": "generativelanguage.googleapis.com"}
         )
         
         simple_prompt = f"""Create a SQLite query for: {question}
@@ -171,32 +147,25 @@ Tables: {', '.join(available_tables)}
 {sample_data[:200]}
 Query:"""
         
-        st.write("📡 Making LLM request (15s timeout)...")
-        
-        result_container = LLMResult()
-        thread = threading.Thread(target=_run_llm_in_thread, args=(llm, simple_prompt, result_container))
-        thread.start()
-        thread.join(timeout=15)
-
-        if thread.is_alive():
-            st.warning(f"LLM request timed out, using rule-based approach.")
-            generated_query = generate_fallback_query(question, available_tables)
-            st.write(f"🔧 Generated fallback query")
-        elif result_container.error:
-            st.warning(f"LLM failed with error ({str(result_container.error)[:50]}...), using rule-based approach.")
-            generated_query = generate_fallback_query(question, available_tables)
-            st.write(f"🔧 Generated fallback query")
-        else:
-            generated_query = result_container.content.strip()
+        try:
+            st.write("📡 Making LLM request...")
+            llm_response = llm.invoke(simple_prompt)
+            generated_query = llm_response.content.strip()
             
+            # Clean up query if it has markdown formatting
             if "```" in generated_query:
                 generated_query = generated_query.split("```")[1].strip()
                 if generated_query.startswith("sql"):
                     generated_query = generated_query[3:].strip()
             
             st.write("✅ LLM generated query successfully")
+            st.write(f"📝 Query to execute: {generated_query}")
             
-        st.write(f"📝 Query to execute: {generated_query}")
+        except Exception as e:
+            st.warning(f"⚠️ LLM failed with error: {str(e)[:100]}")
+            st.write("🛠️ Using rule-based fallback query...")
+            generated_query = generate_fallback_query(question, available_tables)
+            st.write(f"🔧 Generated fallback query: {generated_query}")
         
         st.write("🔧 Step 3: Executing query...")
         
@@ -206,7 +175,7 @@ Query:"""
             st.write("✅ Query executed successfully")
         
         except Exception as e:
-            st.warning(f"LangChain execution failed, trying direct SQLite...")
+            st.warning(f"⚠️ LangChain execution failed, trying direct SQLite...")
             
             try:
                 db_path = db.database_uri.replace('sqlite:///', '')
@@ -217,8 +186,8 @@ Query:"""
                 st.write("✅ Direct SQLite execution successful")
             
             except Exception as e2:
-                st.error(f"Both execution methods failed: {e2}")
-                query_results = f"Error: {e2}"
+                st.error(f"❌ Both execution methods failed: {str(e2)[:200]}")
+                query_results = f"Execution Error: {e2}"
         
         st.write("💭 Step 4: Formatting results...")
         
@@ -235,7 +204,7 @@ Query:"""
                 else:
                     for i, row in enumerate(query_results[:5], 1):
                         final_answer += f"{i}. {row}\n"
-                    final_answer += f"... and {len(query_results)-5} more rows"
+                    final_answer += f"\n... and {len(query_results)-5} more rows"
             else:
                 final_answer = f"Results: {query_results}"
         
@@ -244,8 +213,11 @@ Query:"""
         return final_answer, generated_query, query_results
         
     except Exception as e:
-        st.error(f"❌ Error in process_question: {str(e)}")
-        raise Exception(f"Error in processing: {str(e)}")
+        error_msg = f"❌ Error in process_question: {str(e)}"
+        st.error(error_msg)
+        st.write("🐛 Debug Information:", str(e))
+        traceback.print_exc()
+        return error_msg, "", ""
 
 # --- Streamlit UI ---
 
@@ -384,21 +356,14 @@ if 'db' in st.session_state:
             st.markdown(user_question)
 
         with st.chat_message("assistant"):
-            status_placeholder = st.empty()
-            
             try:
-                status_placeholder.write("🤖 Analyzing your data...")
-                
                 response, generated_query, query_results = process_question(
                     user_question, 
                     st.session_state.db,
                     st.session_state.table_info
                 )
                 
-                status_placeholder.empty()
-                
                 st.markdown(response)
-
                 st.session_state.history.add_ai_message(response)
                 
                 with st.expander("🔍 Show Details"):
@@ -409,15 +374,11 @@ if 'db' in st.session_state:
                     st.text(str(query_results))
 
             except Exception as e:
-                status_placeholder.empty()
-                error_msg = f"❌ I encountered an error: {e}"
+                error_msg = f"❌ Processing failed: {str(e)}"
                 st.error(error_msg)
                 st.session_state.history.add_ai_message(error_msg)
+                traceback.print_exc()
                 
-                with st.expander("🐛 Debug Information"):
-                    st.write("Database tables:", st.session_state.db.get_usable_table_names())
-                    st.write("Table info available:", bool(st.session_state.table_info))
-                    st.write("Error details:", str(e))
 else:
     st.info("👆 Please upload your data files using the sidebar to get started!")
 
@@ -428,4 +389,6 @@ if st.button("🔄 Reset Conversation"):
         del st.session_state.db
     if 'table_info' in st.session_state:
         del st.session_state.table_info
+    if 'processed_files' in st.session_state:
+        del st.session_state.processed_files
     st.rerun()
