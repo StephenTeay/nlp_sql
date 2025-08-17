@@ -37,18 +37,27 @@ def create_database_from_csv_files(csv_files):
     conn = sqlite3.connect(db_path)
     
     table_info = ""
+    schema_description = ""
     
     for csv_file in csv_files:
         df = pd.read_csv(csv_file)
         table_name = re.sub(r'[^a-zA-Z0-9_]', '_', csv_file.name.split('.')[0].lower())
         df.to_sql(table_name, conn, if_exists='replace', index=False)
         
+        # Build detailed schema description
+        schema_description += f"Table: {table_name}\n"
+        for col in df.columns:
+            sample_values = df[col].dropna().sample(min(3, len(df))).tolist()
+            schema_description += f"- {col}: {df[col].dtype} | Sample: {sample_values}\n"
+        schema_description += "\n"
+        
+        # Table info for UI
         table_info += f"Table Name: {table_name}\n"
         table_info += f"Columns: {', '.join(df.columns.tolist())}\n"
         table_info += f"Sample Data: {df.head(2).to_dict('records')}\n\n"
     
     conn.close()
-    return db_path, table_info
+    return db_path, table_info, schema_description
 
 def create_database_from_excel(excel_file):
     """Create SQLite database from uploaded Excel file"""
@@ -58,17 +67,26 @@ def create_database_from_excel(excel_file):
     excel_data = pd.read_excel(excel_file, sheet_name=None)
     
     table_info = ""
+    schema_description = ""
     
     for sheet_name, df in excel_data.items():
         table_name = re.sub(r'[^a-zA-Z0-9_]', '_', sheet_name.lower())
         df.to_sql(table_name, conn, if_exists='replace', index=False)
         
+        # Build detailed schema description
+        schema_description += f"Table: {table_name} (from sheet: {sheet_name})\n"
+        for col in df.columns:
+            sample_values = df[col].dropna().sample(min(3, len(df))).tolist()
+            schema_description += f"- {col}: {df[col].dtype} | Sample: {sample_values}\n"
+        schema_description += "\n"
+        
+        # Table info for UI
         table_info += f"Table Name: {table_name} (from sheet: {sheet_name})\n"
         table_info += f"Columns: {', '.join(df.columns.tolist())}\n"
         table_info += f"Sample Data: {df.head(2).to_dict('records')}\n\n"
     
     conn.close()
-    return db_path, table_info
+    return db_path, table_info, schema_description
 
 def execute_sql_file(sql_file, db_path):
     """Execute SQL file against the database"""
@@ -115,48 +133,68 @@ def generate_fallback_query(question, available_tables):
     else:
         return f"SELECT * FROM {first_table} LIMIT 5;"
 
-def process_question(question: str, db, table_info):
+def process_question(question: str, db, schema_description):
     try:
-        st.write("🔍 Step 1: Preparing query...")
+        st.write("🔍 Step 1: Analyzing database schema...")
         
         available_tables = db.get_usable_table_names()
-        st.write(f"📋 Found tables: {available_tables}")
+        st.write(f"📋 Found tables: {', '.join(available_tables)}")
         
-        sample_data = ""
-        if available_tables:
-            try:
-                sample_query = f"SELECT * FROM {available_tables[0]} LIMIT 3"
-                sample_result = db.run(sample_query)
-                sample_data = f"Sample from {available_tables[0]}: {sample_result}"
-                st.write(f"📊 Got sample data from {available_tables[0]}")
-            except:
-                st.write("⚠️ Could not get sample data")
-        
-        st.write("🤖 Step 2: Generating SQL...")
+        st.write("🤖 Step 2: Generating SQL with enhanced understanding...")
         
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",  # Updated model
+            model="gemini-1.5-flash",
             temperature=0.0,
-            max_output_tokens=100,
+            max_output_tokens=1000,  # Increased for better reasoning
             google_api_key=st.secrets["GOOGLE_API_KEY"],
             client_options={"api_endpoint": "generativelanguage.googleapis.com"}
         )
         
-        simple_prompt = f"""Create a SQLite query for: {question}
-Tables: {', '.join(available_tables)}
-{sample_data[:200]}
-Query:"""
+        # Enhanced prompt with schema analysis instructions
+        prompt = f"""
+You are an expert data analyst and SQL developer. Your task is to analyze the database schema and generate an accurate SQL query based on the user's question.
+
+### Database Schema Description:
+{schema_description}
+
+### User Question:
+{question}
+
+### Instructions:
+1. Carefully analyze the schema to identify the most relevant table(s) and column(s)
+2. For date-related questions, look for columns with names like 'date', 'time', 'day', 'created_at', etc.
+3. For amount-related questions, look for columns with names like 'amount', 'value', 'price', 'total', etc.
+4. When finding maximum/minimum values:
+   - First identify the correct column for the value
+   - Then find the corresponding row with that value
+5. If multiple tables are needed, determine the proper JOIN conditions
+6. Only use columns that actually exist in the schema
+7. If you're unsure about a column's meaning, examine the sample values for clues
+8. For date comparisons, use SQLite date functions like DATE() if needed
+9. Always return the full row when answering "which" or "what" questions
+
+### Important:
+- Only output the SQL query
+- Do not include any explanations or markdown formatting
+- Use table aliases for clarity when joining tables
+- Use LIMIT only when explicitly requested
+
+### SQL Query:
+"""
         
         try:
-            st.write("📡 Making LLM request...")
-            llm_response = llm.invoke(simple_prompt)
+            st.write("📡 Making LLM request with enhanced schema understanding...")
+            llm_response = llm.invoke(prompt)
             generated_query = llm_response.content.strip()
             
-            # Clean up query if it has markdown formatting
+            # Clean up query
             if "```" in generated_query:
                 generated_query = generated_query.split("```")[1].strip()
                 if generated_query.startswith("sql"):
                     generated_query = generated_query[3:].strip()
+            
+            # Remove any non-SQL text after the query
+            generated_query = generated_query.split(';')[0] + ';'
             
             st.write("✅ LLM generated query successfully")
             st.write(f"📝 Query to execute: {generated_query}")
@@ -198,13 +236,22 @@ Query:"""
         else:
             if isinstance(query_results, list) and len(query_results) > 0:
                 final_answer = f"📊 **Results for '{question}':**\n\n"
-                if len(query_results) <= 10:
-                    for i, row in enumerate(query_results, 1):
+                
+                # Convert to DataFrame for better display if possible
+                try:
+                    if isinstance(query_results[0], tuple):
+                        columns = [desc[0] for desc in cursor.description] if 'cursor' in locals() else [f"Column_{i+1}" for i in range(len(query_results[0]))]
+                        df = pd.DataFrame(query_results, columns=columns)
+                        final_answer = f"📊 **Results for '{question}':**\n\n"
+                        final_answer += df.to_markdown(index=False)
+                    else:
+                        for i, row in enumerate(query_results, 1):
+                            final_answer += f"{i}. {row}\n"
+                except:
+                    for i, row in enumerate(query_results[:10], 1):
                         final_answer += f"{i}. {row}\n"
-                else:
-                    for i, row in enumerate(query_results[:5], 1):
-                        final_answer += f"{i}. {row}\n"
-                    final_answer += f"\n... and {len(query_results)-5} more rows"
+                    if len(query_results) > 10:
+                        final_answer += f"\n... and {len(query_results)-10} more rows"
             else:
                 final_answer = f"Results: {query_results}"
         
@@ -221,8 +268,8 @@ Query:"""
 
 # --- Streamlit UI ---
 
-st.title("📊 Natural Language to SQL with File Upload")
-st.write("Upload your data files (CSV, Excel, or SQL) and ask questions about your data using natural language!")
+st.title("📊 Natural Language to SQL with Enhanced Schema Understanding")
+st.write("Upload your data files and ask questions - I'll analyze the schema to find the right columns!")
 
 # Sidebar for file uploads
 with st.sidebar:
@@ -235,6 +282,7 @@ with st.sidebar:
     
     db_path = None
     table_info = ""
+    schema_description = ""
     
     if upload_option == "CSV Files":
         csv_files = st.file_uploader(
@@ -247,11 +295,14 @@ with st.sidebar:
         if csv_files:
             with st.spinner("Creating database from CSV files..."):
                 try:
-                    db_path, table_info = create_database_from_csv_files(csv_files)
+                    db_path, table_info, schema_description = create_database_from_csv_files(csv_files)
                     st.success(f"✅ Created database with {len(csv_files)} tables!")
                     
                     with st.expander("View Table Information"):
                         st.text(table_info)
+                        
+                    with st.expander("View Schema Analysis"):
+                        st.text(schema_description)
                         
                 except Exception as e:
                     st.error(f"Error creating database: {e}")
@@ -266,11 +317,14 @@ with st.sidebar:
         if excel_file:
             with st.spinner("Creating database from Excel file..."):
                 try:
-                    db_path, table_info = create_database_from_excel(excel_file)
+                    db_path, table_info, schema_description = create_database_from_excel(excel_file)
                     st.success("✅ Created database from Excel file!")
                     
                     with st.expander("View Table Information"):
                         st.text(table_info)
+                        
+                    with st.expander("View Schema Analysis"):
+                        st.text(schema_description)
                         
                 except Exception as e:
                     st.error(f"Error creating database: {e}")
@@ -291,7 +345,7 @@ with st.sidebar:
         if excel_file:
             with st.spinner("Creating database from Excel file..."):
                 try:
-                    db_path, table_info = create_database_from_excel(excel_file)
+                    db_path, table_info, schema_description = create_database_from_excel(excel_file)
                     st.success("✅ Created database from Excel file!")
                     
                     if sql_file:
@@ -308,6 +362,9 @@ with st.sidebar:
                     with st.expander("View Table Information"):
                         st.text(table_info)
                         
+                    with st.expander("View Schema Analysis"):
+                        st.text(schema_description)
+                        
                 except Exception as e:
                     st.error(f"Error creating database: {e}")
 
@@ -319,6 +376,7 @@ if db_path and db_path not in st.session_state.get('processed_files', set()):
     try:
         st.session_state.db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
         st.session_state.table_info = table_info
+        st.session_state.schema_description = schema_description
         
         if 'processed_files' not in st.session_state:
             st.session_state.processed_files = set()
@@ -360,7 +418,7 @@ if 'db' in st.session_state:
                 response, generated_query, query_results = process_question(
                     user_question, 
                     st.session_state.db,
-                    st.session_state.table_info
+                    st.session_state.schema_description  # Pass schema description
                 )
                 
                 st.markdown(response)
@@ -389,6 +447,8 @@ if st.button("🔄 Reset Conversation"):
         del st.session_state.db
     if 'table_info' in st.session_state:
         del st.session_state.table_info
+    if 'schema_description' in st.session_state:
+        del st.session_state.schema_description
     if 'processed_files' in st.session_state:
         del st.session_state.processed_files
     st.rerun()
