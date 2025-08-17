@@ -16,15 +16,15 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 
 # --- Configuration and Initialization ---
 
-# Check for required secrets (only need API keys now)
-# if "GEMINI_API_KEY" not in st.secrets:
-#     st.error("Missing GEMINI_API_KEY. Please check your .streamlit/secrets.toml file.")
-#     st.stop()
+Check for required secrets (only need API keys now)
+if "GEMINI_API_KEY" not in st.secrets:
+    st.error("Missing GEMINI_API_KEY. Please check your .streamlit/secrets.toml file.")
+    st.stop()
 
 # Set environment variables from Streamlit secrets
-os.environ["GEMINI_API_KEY"] = "AIzaSyBw8VP3fq87yk9LOGaC72RUSGPmdx3y5Xo"
+os.environ["GEMINI_API_KEY"] = st.secret["GEMINI_API_KEY"]
 if "LANGCHAIN_API_KEY" in st.secrets:
-    os.environ["LANGCHAIN_API_KEY"] = "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"
+    os.environ["LANGCHAIN_API_KEY"] = st.secret["LANGCHAIN_API_KEY"]
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
 # Initialize LLM and embedding model in session state
