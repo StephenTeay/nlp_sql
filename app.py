@@ -7,8 +7,8 @@ from operator import itemgetter
 from langchain_core.prompts import PromptTemplate, FewShotPromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough
 from langchain_community.vectorstores import Chroma
-from langchain_core.example_selector import SemanticSimilarityExampleSelector
-from langchain_core.pydantic import BaseModel, Field
+from langchain.prompts.example_selector import SemanticSimilarityExampleSelector  # Fixed import path
+from langchain_core.pydantic_v1 import BaseModel, Field  # Fixed import path
 from langchain.chains.gemini_tools import create_extraction_chain_pydantic
 from typing import List, Optional
 from langchain.memory import ChatMessageHistory
