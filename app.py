@@ -292,9 +292,29 @@ with st.sidebar:
 st.write("---")
 
 # Initialize database connection in session state
-if db_path and 'db' not in st.session_state:
-    st.session_state.db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
-    st.session_state.table_info = table_info
+if db_path and db_path not in st.session_state.get('processed_files', set()):
+    try:
+        st.session_state.db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
+        st.session_state.table_info = table_info
+        
+        # Keep track of processed files to avoid re-processing
+        if 'processed_files' not in st.session_state:
+            st.session_state.processed_files = set()
+        st.session_state.processed_files.add(db_path)
+        
+        st.success("🎉 Database ready! You can now ask questions.")
+        
+        # Show available tables
+        try:
+            available_tables = st.session_state.db.get_usable_table_names()
+            st.info(f"📋 Available tables: {', '.join(available_tables)}")
+        except:
+            pass
+            
+    except Exception as e:
+        st.error(f"❌ Error connecting to database: {e}")
+        if 'db' in st.session_state:
+            del st.session_state.db
 
 # Display chat history
 for msg in st.session_state.history.messages:
@@ -317,32 +337,46 @@ if 'db' in st.session_state:
 
         # Process the question
         with st.chat_message("assistant"):
-            with st.spinner("Analyzing your data..."):
-                try:
-                    response, generated_query, query_results = process_question(
-                        user_question, 
-                        st.session_state.db,
-                        st.session_state.table_info
-                    )
-                    
-                    # Display the response
-                    st.markdown(response)
+            # Create a placeholder for step-by-step updates
+            status_placeholder = st.empty()
+            
+            try:
+                status_placeholder.write("🤖 Analyzing your data...")
+                
+                response, generated_query, query_results = process_question(
+                    user_question, 
+                    st.session_state.db,
+                    st.session_state.table_info
+                )
+                
+                # Clear status and show final response
+                status_placeholder.empty()
+                
+                # Display the response
+                st.markdown(response)
 
-                    # Add response to history
-                    st.session_state.history.add_ai_message(response)
+                # Add response to history
+                st.session_state.history.add_ai_message(response)
+                
+                # Show details in expander
+                with st.expander("🔍 Show Details"):
+                    st.subheader("Generated SQL Query")
+                    st.code(generated_query, language="sql")
                     
-                    # Show details in expander
-                    with st.expander("🔍 Show Details"):
-                        st.subheader("Generated SQL Query")
-                        st.code(generated_query, language="sql")
-                        
-                        st.subheader("Query Results")
-                        st.text(str(query_results))
+                    st.subheader("Query Results")
+                    st.text(str(query_results))
 
-                except Exception as e:
-                    error_msg = f"❌ I encountered an error: {e}"
-                    st.error(error_msg)
-                    st.session_state.history.add_ai_message(error_msg)
+            except Exception as e:
+                status_placeholder.empty()
+                error_msg = f"❌ I encountered an error: {e}"
+                st.error(error_msg)
+                st.session_state.history.add_ai_message(error_msg)
+                
+                # Show debug info
+                with st.expander("🐛 Debug Information"):
+                    st.write("Database tables:", st.session_state.db.get_usable_table_names())
+                    st.write("Table info available:", bool(st.session_state.table_info))
+                    st.write("Error details:", str(e))
 else:
     st.info("👆 Please upload your data files using the sidebar to get started!")
 
