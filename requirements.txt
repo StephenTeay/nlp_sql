@@ -15,6 +15,9 @@ langchain-google-genai>=1.0.0
 # Vector store and embeddings
 chromadb>=0.4.0
 
+# Output parsers
+langchain-core>=0.1.0
+
 # Database connectivity
 SQLAlchemy>=2.0.0
 PyMySQL>=1.1.0
