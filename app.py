@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import os
+import sqlite3
+import tempfile
 from langchain.chains import create_sql_query_chain
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from operator import itemgetter
@@ -9,40 +11,28 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_community.vectorstores import Chroma
 from langchain.prompts.example_selector import SemanticSimilarityExampleSelector
 from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain.chains import create_extraction_chain_pydantic
 from typing import List, Optional
 from langchain.memory import ChatMessageHistory
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
+import re
+import io
 
 # --- Configuration and Initialization ---
 
-# Check for required secrets
-if "GEMINI_API_KEY" not in st.secrets or "LANGCHAIN_API_KEY" not in st.secrets or "db" not in st.secrets:
-    st.error("Missing API keys or database credentials. Please check your .streamlit/secrets.toml file.")
+# Check for required secrets (only need API keys now)
+if "GEMINI_API_KEY" not in st.secrets:
+    st.error("Missing GEMINI_API_KEY. Please check your .streamlit/secrets.toml file.")
     st.stop()
 
 # Set environment variables from Streamlit secrets
 os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
-os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
+if "LANGCHAIN_API_KEY" in st.secrets:
+    os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
-# Use session state to persist components across reruns
-if 'history' not in st.session_state:
-    st.session_state.history = ChatMessageHistory()
-if 'db' not in st.session_state:
-    st.session_state.db_user = st.secrets["db"]["user"]
-    st.session_state.db_password = st.secrets["db"]["password"]
-    st.session_state.db_host = st.secrets["db"]["host"]
-    st.session_state.db_name = st.secrets["db"]["name"]
-    try:
-        st.session_state.db = SQLDatabase.from_uri(f"mysql+pymysql://{st.session_state.db_user}:{st.session_state.db_password}@{st.session_state.db_host}/{st.session_state.db_name}")
-        st.success("Successfully connected to the database!")
-    except Exception as e:
-        st.error(f"Error connecting to database: {e}")
-        st.session_state.db = None
-        st.stop()
+# Initialize LLM and embedding model
 if 'llm' not in st.session_state:
     st.session_state.llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash",
@@ -52,31 +42,89 @@ if 'llm' not in st.session_state:
 if 'embedding_model' not in st.session_state:
     st.session_state.embedding_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
+# Initialize chat history
+if 'history' not in st.session_state:
+    st.session_state.history = ChatMessageHistory()
+
 # --- Helper Functions ---
 
-# Function to get table details from a CSV file
-def get_table_details():
-    try:
-        table_description = pd.read_csv("table_description.csv")
-        table_details = ""
-        for index, row in table_description.iterrows():
-            table_details += f"Table Name: {row['Table']}\n"
-            table_details += f"Table Description: {row['Description']}\n"
-            table_details += f"Columns: {row['Columns']}\n\n"
-        return table_details
-    except FileNotFoundError:
-        st.warning("`table_description.csv` not found. Table descriptions will not be used for query generation.")
-        return ""
+def create_database_from_csv_files(csv_files):
+    """Create SQLite database from uploaded CSV files"""
+    # Create temporary database
+    db_path = tempfile.mktemp(suffix='.db')
+    conn = sqlite3.connect(db_path)
+    
+    table_info = ""
+    
+    for csv_file in csv_files:
+        # Read CSV
+        df = pd.read_csv(csv_file)
+        
+        # Clean table name (remove extension and special characters)
+        table_name = re.sub(r'[^a-zA-Z0-9_]', '_', csv_file.name.split('.')[0].lower())
+        
+        # Save to SQLite
+        df.to_sql(table_name, conn, if_exists='replace', index=False)
+        
+        # Generate table info
+        table_info += f"Table Name: {table_name}\n"
+        table_info += f"Columns: {', '.join(df.columns.tolist())}\n"
+        table_info += f"Sample Data: {df.head(2).to_dict('records')}\n\n"
+    
+    conn.close()
+    return db_path, table_info
 
-# Pydantic model for table extraction
-class Table(BaseModel):
-    name: str = Field(..., description="Name of the table in SQL database")
+def create_database_from_excel(excel_file):
+    """Create SQLite database from uploaded Excel file"""
+    # Create temporary database
+    db_path = tempfile.mktemp(suffix='.db')
+    conn = sqlite3.connect(db_path)
+    
+    # Read all sheets
+    excel_data = pd.read_excel(excel_file, sheet_name=None)
+    
+    table_info = ""
+    
+    for sheet_name, df in excel_data.items():
+        # Clean table name
+        table_name = re.sub(r'[^a-zA-Z0-9_]', '_', sheet_name.lower())
+        
+        # Save to SQLite
+        df.to_sql(table_name, conn, if_exists='replace', index=False)
+        
+        # Generate table info
+        table_info += f"Table Name: {table_name} (from sheet: {sheet_name})\n"
+        table_info += f"Columns: {', '.join(df.columns.tolist())}\n"
+        table_info += f"Sample Data: {df.head(2).to_dict('records')}\n\n"
+    
+    conn.close()
+    return db_path, table_info
 
-# Function to extract table names from the Pydantic model output
-def get_tables(tables: List[Table]) -> List[str]:
-    return [table.name for table in tables]
-
-# --- LangChain Component Setup ---
+def execute_sql_file(sql_file, db_path):
+    """Execute SQL file against the database"""
+    conn = sqlite3.connect(db_path)
+    
+    # Read SQL file content
+    sql_content = sql_file.read().decode('utf-8')
+    
+    # Split SQL statements (simple approach)
+    statements = [stmt.strip() for stmt in sql_content.split(';') if stmt.strip()]
+    
+    results = []
+    for statement in statements:
+        try:
+            cursor = conn.execute(statement)
+            if statement.upper().startswith('SELECT'):
+                result = cursor.fetchall()
+                results.append(f"Query: {statement}\nResults: {result}\n")
+            else:
+                conn.commit()
+                results.append(f"Executed: {statement}\n")
+        except Exception as e:
+            results.append(f"Error in statement '{statement}': {e}\n")
+    
+    conn.close()
+    return '\n'.join(results)
 
 # Initialize vectorstore and example selector once
 @st.cache_resource
@@ -84,97 +132,59 @@ def initialize_vectorstore():
     # Few-shot examples for dynamic selection
     examples = [
         {
-            "question": "What is the total sales amount for each product in the last month?",
-            "query": "SELECT product_id, SUM(sales_amount) AS total_sales FROM sales WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH) GROUP BY product_id;"
+            "question": "What is the total sales amount for each product?",
+            "query": "SELECT product_name, SUM(sales_amount) AS total_sales FROM sales GROUP BY product_name;"
         },
         {
-            "question": "How many customers made purchases last week?",
-            "query": "SELECT COUNT(DISTINCT customer_id) AS total_customers FROM sales WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY);"
+            "question": "How many customers are there?",
+            "query": "SELECT COUNT(DISTINCT customer_id) AS total_customers FROM customers;"
+        },
+        {
+            "question": "Show me the top 5 products by sales",
+            "query": "SELECT product_name, SUM(sales_amount) as total FROM sales GROUP BY product_name ORDER BY total DESC LIMIT 5;"
         }
     ]
     
-    vectorstore = Chroma.from_texts(
-        [example["question"] for example in examples],
-        st.session_state.embedding_model
+    return examples
+
+# Set up prompt templates
+def setup_prompts():
+    example_prompt = PromptTemplate.from_template(
+        "User input: {question}\nSQL query: {query}"
     )
-    
-    example_selector = SemanticSimilarityExampleSelector(
-        vectorstore=vectorstore,
-        k=2,
-        input_keys=["question"],
-    )
-    
-    return examples, example_selector
 
-examples, example_selector = initialize_vectorstore()
-
-# Set up the example prompt template
-example_prompt = PromptTemplate.from_template(
-    "User input: {question}\nSQL query: {query}"
-)
-
-# Few-shot prompt template
-few_shot_prompt = FewShotPromptTemplate(
-    example_selector=example_selector,
-    example_prompt=example_prompt,
-    prefix="You are a MySQL expert. Here are some examples of questions and their corresponding SQL queries:",
-    suffix="Now, generate a SQL query for the following question:\nUser input: {question}\nSQL query:",
-    input_variables=["question"],
-)
-
-# Prompt for the final answer
-rephrase_answer_prompt = PromptTemplate.from_template(
-    """
-    Given the SQL query results, provide a concise answer to the question.
-    Question: {question}   
-    SQL Query: {query}
-    SQL Query Results: {results}
-    Answer:
-    """
-)
-
-# Final prompt for the SQL query chain
-final_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", "You are a MySQL expert. Given an input question and table information, create a syntactically correct SQL query.\n\nHere is the relevant table info: {table_info}"),
-        MessagesPlaceholder(variable_name="few_shot_examples"),
-        MessagesPlaceholder(variable_name="history"),
-        ("human", "{question}"),
-    ]
-)
-
-# Get table details
-table_details = get_table_details()
-
-# Table selection function - simplified approach
-def select_relevant_tables(question: str) -> str:
-    if table_details:
-        # For now, return all table details - you can make this smarter
-        return table_details
-    return ""
-
-# Main chain components
-generate_query_chain = create_sql_query_chain(st.session_state.llm, st.session_state.db)
-execute_query_tool = QuerySQLDatabaseTool(db=st.session_state.db)
-rephrase_answer_chain = rephrase_answer_prompt | st.session_state.llm | StrOutputParser()
-
-# Simplified chain that works step by step
-def process_question(question: str, history_messages):
-    try:
-        # Step 1: Get relevant table info
-        relevant_tables = select_relevant_tables(question)
+    rephrase_answer_prompt = PromptTemplate.from_template(
+        """
+        Given the SQL query results, provide a concise and helpful answer to the question.
+        Question: {question}   
+        SQL Query: {query}
+        SQL Query Results: {results}
         
-        # Step 2: Generate SQL query
+        Answer:
+        """
+    )
+    
+    return example_prompt, rephrase_answer_prompt
+
+# Process question function
+def process_question(question: str, db, table_info):
+    try:
+        # Step 1: Generate SQL query
         query_input = {
             "question": question,
-            "table_info": relevant_tables
+            "table_info": table_info
         }
+        generate_query_chain = create_sql_query_chain(st.session_state.llm, db)
         generated_query = generate_query_chain.invoke(query_input)
         
-        # Step 3: Execute query
+        # Step 2: Execute query
+        execute_query_tool = QuerySQLDatabaseTool(db=db)
         query_results = execute_query_tool.invoke({"query": generated_query})
         
-        # Step 4: Generate final answer
+        # Step 3: Generate final answer
+        example_prompt, rephrase_answer_prompt = setup_prompts()
+        rephrase_answer_chain = rephrase_answer_prompt | st.session_state.llm | StrOutputParser()
+        
         answer_input = {
             "question": question,
             "query": generated_query,
@@ -182,16 +192,110 @@ def process_question(question: str, history_messages):
         }
         final_answer = rephrase_answer_chain.invoke(answer_input)
         
-        return final_answer, generated_query, query_results, relevant_tables
+        return final_answer, generated_query, query_results
         
     except Exception as e:
         raise Exception(f"Error in processing: {str(e)}")
 
 # --- Streamlit UI ---
 
-st.title("Natural Language to SQL with LangChain 🤖")
-st.write("Ask a question about your `classicmodels` database and I'll use AI to generate and execute a SQL query to find the answer.")
+st.title("📊 Natural Language to SQL with File Upload")
+st.write("Upload your data files (CSV, Excel, or SQL) and ask questions about your data using natural language!")
+
+# Sidebar for file uploads
+with st.sidebar:
+    st.header("📁 Upload Your Data")
+    
+    upload_option = st.radio(
+        "Choose your data source:",
+        ["CSV Files", "Excel File", "Excel + SQL File"]
+    )
+    
+    db_path = None
+    table_info = ""
+    
+    if upload_option == "CSV Files":
+        csv_files = st.file_uploader(
+            "Upload CSV files",
+            type=['csv'],
+            accept_multiple_files=True,
+            help="Upload one or more CSV files. Each file will become a table."
+        )
+        
+        if csv_files:
+            with st.spinner("Creating database from CSV files..."):
+                try:
+                    db_path, table_info = create_database_from_csv_files(csv_files)
+                    st.success(f"✅ Created database with {len(csv_files)} tables!")
+                    
+                    with st.expander("View Table Information"):
+                        st.text(table_info)
+                        
+                except Exception as e:
+                    st.error(f"Error creating database: {e}")
+    
+    elif upload_option == "Excel File":
+        excel_file = st.file_uploader(
+            "Upload Excel file",
+            type=['xlsx', 'xls'],
+            help="Upload an Excel file. Each sheet will become a table."
+        )
+        
+        if excel_file:
+            with st.spinner("Creating database from Excel file..."):
+                try:
+                    db_path, table_info = create_database_from_excel(excel_file)
+                    st.success("✅ Created database from Excel file!")
+                    
+                    with st.expander("View Table Information"):
+                        st.text(table_info)
+                        
+                except Exception as e:
+                    st.error(f"Error creating database: {e}")
+    
+    elif upload_option == "Excel + SQL File":
+        excel_file = st.file_uploader(
+            "Upload Excel file",
+            type=['xlsx', 'xls'],
+            help="Upload an Excel file for data"
+        )
+        
+        sql_file = st.file_uploader(
+            "Upload SQL file",
+            type=['sql'],
+            help="Upload a SQL file to modify the database"
+        )
+        
+        if excel_file:
+            with st.spinner("Creating database from Excel file..."):
+                try:
+                    db_path, table_info = create_database_from_excel(excel_file)
+                    st.success("✅ Created database from Excel file!")
+                    
+                    if sql_file:
+                        with st.spinner("Executing SQL file..."):
+                            try:
+                                sql_results = execute_sql_file(sql_file, db_path)
+                                st.success("✅ SQL file executed!")
+                                
+                                with st.expander("SQL Execution Results"):
+                                    st.text(sql_results)
+                            except Exception as e:
+                                st.error(f"Error executing SQL file: {e}")
+                    
+                    with st.expander("View Table Information"):
+                        st.text(table_info)
+                        
+                except Exception as e:
+                    st.error(f"Error creating database: {e}")
+
+# Main chat interface
 st.write("---")
+
+# Initialize database connection in session state
+if db_path and 'db' not in st.session_state:
+    st.session_state.db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
+    st.session_state.table_info = table_info
 
 # Display chat history
 for msg in st.session_state.history.messages:
@@ -203,50 +307,51 @@ for msg in st.session_state.history.messages:
             st.markdown(msg.content)
 
 # Handle user input
-user_question = st.chat_input("Ask a question about the database...")
+if 'db' in st.session_state:
+    user_question = st.chat_input("Ask a question about your data...")
+    
+    if user_question:
+        # Add user question to history
+        st.session_state.history.add_user_message(user_question)
+        with st.chat_message("user"):
+            st.markdown(user_question)
 
-if user_question:
-    # Add user question to history
-    st.session_state.history.add_user_message(user_question)
-    with st.chat_message("user"):
-        st.markdown(user_question)
-
-    # Run the chain and display progress
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                # Process the question
-                response, generated_query, query_results, tables_used = process_question(
-                    user_question, 
-                    st.session_state.history.messages
-                )
-                
-                # Display the response
-                st.markdown(response)
-
-                # Add generated AI response to history
-                st.session_state.history.add_ai_message(response)
-                
-                # Use expanders to show the "behind-the-scenes" process
-                with st.expander("Show details"):
-                    st.subheader("Relevant Tables")
-                    if tables_used:
-                        st.text(tables_used)
-                    else:
-                        st.write("No specific tables selected (or `table_description.csv` is missing).")
+        # Process the question
+        with st.chat_message("assistant"):
+            with st.spinner("Analyzing your data..."):
+                try:
+                    response, generated_query, query_results = process_question(
+                        user_question, 
+                        st.session_state.db,
+                        st.session_state.table_info
+                    )
                     
-                    st.subheader("Generated SQL Query")
-                    st.code(generated_query, language="sql")
+                    # Display the response
+                    st.markdown(response)
+
+                    # Add response to history
+                    st.session_state.history.add_ai_message(response)
                     
-                    st.subheader("Query Results")
-                    st.text(str(query_results))
+                    # Show details in expander
+                    with st.expander("🔍 Show Details"):
+                        st.subheader("Generated SQL Query")
+                        st.code(generated_query, language="sql")
+                        
+                        st.subheader("Query Results")
+                        st.text(str(query_results))
 
-            except Exception as e:
-                error_msg = f"I encountered an error while processing your request: {e}"
-                st.error(error_msg)
-                st.session_state.history.add_ai_message(error_msg)
+                except Exception as e:
+                    error_msg = f"❌ I encountered an error: {e}"
+                    st.error(error_msg)
+                    st.session_state.history.add_ai_message(error_msg)
+else:
+    st.info("👆 Please upload your data files using the sidebar to get started!")
 
-# Add a reset button to clear the conversation
-if st.button("Reset Conversation"):
+# Reset conversation button
+if st.button("🔄 Reset Conversation"):
     st.session_state.history = ChatMessageHistory()
+    if 'db' in st.session_state:
+        del st.session_state.db
+    if 'table_info' in st.session_state:
+        del st.session_state.table_info
     st.rerun()
