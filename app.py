@@ -3,21 +3,20 @@ import pandas as pd
 import os
 import sqlite3
 import tempfile
+import asyncio
+import nest_asyncio
 from langchain.chains import create_sql_query_chain
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
-from operator import itemgetter
-from langchain_core.prompts import PromptTemplate, FewShotPromptTemplate, ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough
-from langchain_community.vectorstores import Chroma
-from langchain.prompts.example_selector import SemanticSimilarityExampleSelector
-from langchain_core.pydantic_v1 import BaseModel, Field
-from typing import List, Optional
+from langchain_core.prompts import PromptTemplate
 from langchain.memory import ChatMessageHistory
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 import re
 import io
+
+# Fix the event loop issue
+nest_asyncio.apply()
 
 # --- Configuration and Initialization ---
 
@@ -128,8 +127,8 @@ def execute_sql_file(sql_file, db_path):
 
 # Initialize vectorstore and example selector once
 @st.cache_resource
-def initialize_vectorstore():
-    # Few-shot examples for dynamic selection
+def initialize_examples():
+    # Simple examples without vectorstore to avoid async issues
     examples = [
         {
             "question": "What is the total sales amount for each product?",
