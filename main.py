@@ -24,7 +24,7 @@ if "GEMINI_API_KEY" not in st.secrets:
 # Set environment variables from Streamlit secrets
 os.environ["GEMINI_API_KEY"] = "AIzaSyBw8VP3fq87yk9LOGaC72RUSGPmdx3y5Xo"
 if "LANGCHAIN_API_KEY" in st.secrets:
-    os.environ["LANGCHAIN_API_KEY"] = st.secrets["LANGCHAIN_API_KEY"]
+    os.environ["LANGCHAIN_API_KEY"] = "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"
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
 # Initialize LLM and embedding model in session state
