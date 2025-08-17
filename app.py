@@ -5,15 +5,15 @@ import sqlite3
 import tempfile
 import asyncio
 import nest_asyncio
-from langchain.chains import create_sql_query_chain
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from langchain_core.prompts import PromptTemplate
-from langchain.memory import ChatMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 import re
 import io
+import time
 
 # Fix the event loop issue
 nest_asyncio.apply()
