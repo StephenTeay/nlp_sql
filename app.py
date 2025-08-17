@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import os
 from langchain.chains import create_sql_query_chain
-from langchain_gemini import Gemini, GeminiEmbeddings
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
 from operator import itemgetter
 from langchain_core.prompts import PromptTemplate, FewShotPromptTemplate, ChatPromptTemplate, MessagesPlaceholder
@@ -14,6 +13,7 @@ from langchain.chains.gemini_tools import create_extraction_chain_pydantic
 from typing import List, Optional
 from langchain.memory import ChatMessageHistory
 from langchain_community.utilities.sql_database import SQLDatabase
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
 # --- Configuration and Initialization ---
 
@@ -43,13 +43,13 @@ if 'db' not in st.session_state:
         st.session_state.db = None
         st.stop()
 if 'llm' not in st.session_state:
-    st.session_state.llm = Gemini(
+    st.session_state.llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash",
         temperature=0.0,
         max_output_tokens=1024
     )
 if 'embedding_model' not in st.session_state:
-    st.session_state.embedding_model = GeminiEmbeddings()
+    st.session_state.embedding_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
 # --- Helper Functions ---
 
@@ -245,4 +245,3 @@ if user_question:
 if st.button("Reset Conversation"):
     st.session_state.history = ChatMessageHistory()
     st.rerun()
-
