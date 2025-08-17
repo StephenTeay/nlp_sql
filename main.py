@@ -30,7 +30,7 @@ if "LANGCHAIN_API_KEY" in st.secrets:
 # Initialize LLM and embedding model in session state
 if 'llm' not in st.session_state:
     st.session_state.llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-pro",
         temperature=0.0,
         max_output_tokens=1024
     )
@@ -161,7 +161,7 @@ def process_question(question: str, db, table_info):
         generated_query = None
         
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-pro",
             temperature=0.0,
             max_output_tokens=100,
         )
