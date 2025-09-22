@@ -32,3 +32,10 @@ faiss-cpu>=1.7.4
 tiktoken>=0.5.0
 google-generativeai
 openpyxl
+
+
+numpy==1.26.4
+plotly==5.22.0
+scipy==1.13.1
+scikit-learn==1.5.0
+google-search-results==2.4.2
