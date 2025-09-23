@@ -34,7 +34,7 @@ tiktoken>=0.5.0
 openpyxl
 
 
-numpy>=1.24.0,<2.0.o
+numpy>=1.24.0,<2.0.0
 plotly==5.22.0
 scipy==1.13.1
 scikit-learn==1.5.0
