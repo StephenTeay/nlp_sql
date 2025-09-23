@@ -1,12 +1,12 @@
 # Core web framework
-streamlit>=1.28.0
+streamlit>=1.28.0,<2.0.0
 
 # Data manipulation
 pandas>=2.0.0
 
 # LangChain core packages
 langchain>=0.1.0
-langchain-core>=0.1.0
+
 langchain-community>=0.0.20
 
 # Google Generative AI integration
@@ -30,11 +30,11 @@ typing-extensions>=4.5.0
 # Optional: For better performance and additional features
 faiss-cpu>=1.7.4
 tiktoken>=0.5.0
-google-generativeai
+
 openpyxl
 
 
-numpy==1.26.4
+numpy>=1.24.0,<2.0.o
 plotly==5.22.0
 scipy==1.13.1
 scikit-learn==1.5.0
