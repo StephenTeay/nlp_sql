@@ -1357,10 +1357,12 @@ if 'db' in st.session_state:
                 
                 with col2:
                     if st.button("📊 Add to Dashboard") and not results_df.empty:
-                        viz_config = analysis_results.get("visualization")
-                        create_dashboard_item(user_question, generated_query, results_df, 
-                                             analysis_results.get("viz_config"))
+                        viz_config = generate_visualization(results_df, generated_query, user_question)
+                        create_dashboard_item(user_question, generated_query, results_df, viz_config)
                         st.success("Added to dashboard!")
+    
+        # Generate viz_config properly for dashboard storage
+        
                 
                 with col3:
                     if st.button("📥 Export Results") and not results_df.empty:
