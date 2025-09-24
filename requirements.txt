@@ -37,5 +37,5 @@ openpyxl
 numpy>=1.24.0,<2.0.0
 plotly==5.22.0
 scipy --only-binary=scipy
-scikit-learn==1.5.0
+scikit-learn --only-binary=scikit-learn
 google-search-results==2.4.2
