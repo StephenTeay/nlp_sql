@@ -61,7 +61,7 @@ def get_column_summary(df, col):
     non_null = df[col].dropna()
     n_non_null = len(non_null)
     
-    sample_size = min(3, n_null)
+    sample_size = min(3, non_null)
     sample_values = non_null.sample(sample_size).tolist() if n_non_null > 0 else []
     
     # Enhanced type detection
