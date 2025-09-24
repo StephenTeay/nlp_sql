@@ -731,6 +731,172 @@ def generate_fallback_query(question, available_tables):
     else:
         return f"SELECT * FROM {first_table} LIMIT 10;"
 
+def process_question_enhanced(question: str, db, schema_description):
+    """Enhanced question processing with all new features - Fixed return values"""
+    try:
+        st.write("🔍 Step 1: Analyzing database schema...")
+        
+        available_tables = db.get_usable_table_names()
+        st.write(f"📋 Found tables: {', '.join(available_tables)}")
+        
+        st.write("🤖 Step 2: Generating enhanced SQL query...")
+        
+        # Generate query with context
+        context = st.session_state.conversation_context[-3:] if st.session_state.conversation_context else []
+        generated_query = generate_enhanced_query(question, db, schema_description, context)
+        
+        st.write(f"📝 Generated query: {generated_query}")
+        
+        # Validate query
+        is_valid, validation_msg = validate_sql_query(generated_query, available_tables)
+        if not is_valid:
+            st.error(f"❌ Query validation failed: {validation_msg}")
+            # Return 4 values consistently - including empty analysis_results
+            return f"Query validation failed: {validation_msg}", generated_query, pd.DataFrame(), {}
+        
+        # Get optimization suggestions
+        suggestions = optimize_query_suggestions(generated_query, st.session_state.get('table_info', {}))
+        if suggestions:
+            with st.expander("💡 Query Optimization Suggestions"):
+                for suggestion in suggestions:
+                    st.write(suggestion)
+        
+        st.write("🔧 Step 3: Executing query...")
+        
+        # Initialize results_df to avoid UnboundLocalError
+        results_df = pd.DataFrame()
+        
+        try:
+            execute_query_tool = QuerySQLDatabaseTool(db=db)
+            query_results = execute_query_tool.invoke({"query": generated_query})
+            st.write("✅ Query executed successfully")
+        
+        except Exception as e:
+            st.warning(f"⚠️ LangChain execution failed, trying direct SQLite...")
+            
+            try:
+                db_path = db.database_uri.replace('sqlite:///', '')
+                conn = sqlite3.connect(db_path, timeout=10.0)
+                cursor = conn.execute(generated_query)
+                
+                if generated_query.upper().strip().startswith('SELECT'):
+                    columns = [description[0] for description in cursor.description]
+                    query_results = cursor.fetchall()
+                    
+                    # Convert to DataFrame for better processing
+                    if query_results:
+                        results_df = pd.DataFrame(query_results, columns=columns)
+                    else:
+                        results_df = pd.DataFrame()
+                else:
+                    query_results = "Query executed successfully"
+                    results_df = pd.DataFrame()
+                
+                conn.close()
+                st.write("✅ Direct SQLite execution successful")
+            
+            except Exception as e2:
+                st.error(f"❌ Both execution methods failed: {str(e2)[:200]}")
+                # Return 4 values consistently
+                return f"Execution Error: {e2}", generated_query, pd.DataFrame(), {}
+        
+        # Process results
+        if isinstance(query_results, str):
+            if "Error" in query_results:
+                final_answer = f"❌ Query execution failed: {query_results}"
+                results_df = pd.DataFrame()
+            else:
+                final_answer = query_results
+                results_df = pd.DataFrame()
+        else:
+            try:
+                # Convert results to DataFrame
+                if isinstance(query_results, list) and query_results:
+                    if isinstance(query_results[0], (tuple, list)):
+                        # Try to get column names from the last cursor
+                        try:
+                            columns = [description[0] for description in cursor.description]
+                        except:
+                            columns = [f"Column_{i+1}" for i in range(len(query_results[0]))]
+                        results_df = pd.DataFrame(query_results, columns=columns)
+                    else:
+                        results_df = pd.DataFrame(query_results)
+                else:
+                    results_df = pd.DataFrame()
+                
+                if not results_df.empty:
+                    final_answer = f"📊 **Results for '{question}':**\n\n"
+                    final_answer += results_df.to_markdown(index=False)
+                else:
+                    final_answer = "No results found for your query."
+                    
+            except Exception as e:
+                final_answer = f"📊 **Results for '{question}':**\n\n{str(query_results)[:1000]}"
+                results_df = pd.DataFrame()
+        
+        st.write("📈 Step 4: Advanced Analysis...")
+        
+        # Perform advanced analysis if we have meaningful data
+        analysis_results = {}
+        if not results_df.empty and len(results_df) > 1:
+            
+            # Generate visualization
+            viz_config = generate_visualization(results_df, generated_query, question)
+            if viz_config:
+                st.write("📊 Creating visualization...")
+                fig = create_visualization(results_df, viz_config)
+                if fig:
+                    analysis_results["visualization"] = fig
+            
+            # Statistical analysis
+            if len(results_df.select_dtypes(include=[np.number]).columns) > 0:
+                st.write("📊 Performing statistical analysis...")
+                stats_analysis = perform_statistical_analysis(results_df)
+                analysis_results["statistics"] = stats_analysis
+                
+                # Anomaly detection
+                anomalies = detect_anomalies(results_df)
+                if anomalies:
+                    analysis_results["anomalies"] = anomalies
+                
+                # Clustering analysis
+                if len(results_df) >= 10:
+                    clustered_df = simple_clustering(results_df)
+                    if clustered_df is not None:
+                        analysis_results["clustering"] = clustered_df
+        
+        # Cache the result
+        cache_query_result(generated_query, {
+            "answer": final_answer,
+            "dataframe": results_df,
+            "analysis": analysis_results
+        })
+        
+        # Add to history
+        add_to_query_history(question, generated_query, final_answer)
+        
+        # Update conversation context
+        st.session_state.conversation_context.append({
+            "question": question,
+            "query": generated_query,
+            "result": final_answer[:500]  # Truncated for context
+        })
+        
+        # Keep only recent context
+        if len(st.session_state.conversation_context) > 10:
+            st.session_state.conversation_context = st.session_state.conversation_context[-10:]
+        
+        st.write("✅ Enhanced processing complete!")
+        
+        # Always return exactly 4 values
+        return final_answer, generated_query, results_df, analysis_results
+        
+    except Exception as e:
+        error_msg = f"❌ Error in enhanced processing: {str(e)}"
+        st.error(error_msg)
+        traceback.print_exc()
+        # Always return exactly 4 values, even in error cases
+        return error_msg, "", pd.DataFrame(), {}
 def validate_sql_query(query: str, available_tables: List[str]) -> Tuple[bool, str]:
     """Validate SQL query before execution"""
     # Clean and normalize the query first
