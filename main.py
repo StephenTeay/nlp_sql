@@ -61,23 +61,28 @@ def get_column_summary(df, col):
     non_null = df[col].dropna()
     n_non_null = len(non_null)
     
-    sample_size = min(3, non_null)
+    sample_size = min(3, n_non_null)
     sample_values = non_null.sample(sample_size).tolist() if n_non_null > 0 else []
     
-    # Enhanced type detection
+    # Enhanced type detection - Fixed the ambiguous Series issue
     col_type = str(df[col].dtype)
     if col_type.startswith('datetime'):
         col_type = "datetime"
     elif np.issubdtype(df[col].dtype, np.number):
         col_type = "numeric"
     elif col_type == 'object':
-        if df[col].apply(lambda x: isinstance(x, str) if pd.notna(x) else False).all():
-            col_type = "text"
+        # Fix: Check if non_null is not empty before applying the check
+        if n_non_null > 0:
+            string_check = df[col].dropna().apply(lambda x: isinstance(x, str))
+            if len(string_check) > 0 and string_check.all():
+                col_type = "text"
+            else:
+                col_type = "mixed"
         else:
             col_type = "mixed"
     
     # Data quality metrics
-    null_percentage = (len(df) - n_non_null) / len(df) * 100
+    null_percentage = (len(df) - n_non_null) / len(df) * 100 if len(df) > 0 else 0
     duplicate_count = df[col].duplicated().sum()
     unique_count = df[col].nunique()
     
@@ -88,16 +93,18 @@ def get_column_summary(df, col):
         # Detect potential outliers
         q1, q3 = non_null.quantile([0.25, 0.75])
         iqr = q3 - q1
-        outliers = len(non_null[(non_null < q1 - 1.5*iqr) | (non_null > q3 + 1.5*iqr)])
-        if outliers > 0:
-            value_range += f" | Outliers: {outliers}"
+        if iqr > 0:  # Avoid division by zero
+            outliers = len(non_null[(non_null < q1 - 1.5*iqr) | (non_null > q3 + 1.5*iqr)])
+            if outliers > 0:
+                value_range += f" | Outliers: {outliers}"
     
     # Date format detection
     date_format = ""
     if col_type == "datetime" and n_non_null > 0:
         try:
-            date_format = pd.to_datetime(non_null).dt.strftime('%Y-%m-%d').iloc[0]
-            date_format = f" | Format: {date_format[:10]}"
+            date_sample = pd.to_datetime(non_null)
+            if len(date_sample) > 0:
+                date_format = f" | Format: {date_sample.dt.strftime('%Y-%m-%d').iloc[0][:10]}"
         except:
             pass
     
@@ -105,7 +112,7 @@ def get_column_summary(df, col):
     categorical_info = ""
     if col_type == "text" and unique_count < 50:
         categorical_info = f" | Categories: {unique_count}"
-        if unique_count <= 10:
+        if unique_count <= 10 and n_non_null > 0:
             top_values = df[col].value_counts().head(3).to_dict()
             categorical_info += f" | Top: {top_values}"
     
