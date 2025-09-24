@@ -996,12 +996,12 @@ def create_dashboard_item(question: str, query: str, results_df: pd.DataFrame, v
         "question": question,
         "query": query,
         "data": results_df.to_dict('records') if not results_df.empty else [],
-        "viz_config": viz_config,
+        "viz_config": viz_config,  # Store the viz_config, not the figure
         "title": question[:50] + "..." if len(question) > 50 else question
     }
     
     st.session_state.dashboard_items.append(dashboard_item)
-
+    
 def display_dashboard():
     """Display dashboard with saved items"""
     if not st.session_state.dashboard_items:
