@@ -1182,136 +1182,141 @@ with tab1:
                 st.markdown(msg.content)
 
     # Handle user input
-    if 'db' in st.session_state:
-        # Check if there's a template question to use
-        default_question = st.session_state.get('template_question', '')
-        if default_question:
-            del st.session_state.template_question
-        
-        user_question = st.chat_input("Ask a question about your data...", value=default_question)
-        
-        if user_question:
-            st.session_state.history.add_user_message(user_question)
-            with st.chat_message("user"):
-                st.markdown(user_question)
-
-            with st.chat_message("assistant"):
-                try:
-                    response, generated_query, results_df, analysis_results = process_question_enhanced(
-                        user_question, 
-                        st.session_state.db,
-                        st.session_state.schema_description
-                    )
-                    
-                    st.markdown(response)
-                    st.session_state.history.add_ai_message(response)
-                    
-                    # Display analysis results
-                    if analysis_results:
-                        
-                        # Visualization
-                        if "visualization" in analysis_results:
-                            st.plotly_chart(analysis_results["visualization"], use_container_width=True)
-                        
-                        # Statistical Analysis
-                        if "statistics" in analysis_results:
-                            with st.expander("📊 Statistical Analysis"):
-                                stats = analysis_results["statistics"]
-                                
-                                if "descriptive" in stats:
-                                    st.write("**Descriptive Statistics:**")
-                                    desc_df = pd.DataFrame(stats["descriptive"])
-                                    st.dataframe(desc_df, use_container_width=True)
-                                
-                                if "strong_correlations" in stats and stats["strong_correlations"]:
-                                    st.write("**Strong Correlations Found:**")
-                                    for corr in stats["strong_correlations"]:
-                                        st.write(f"- {corr['col1']} ↔ {corr['col2']}: {corr['correlation']:.3f}")
-                                
-                                if "outliers" in stats and stats["outliers"]:
-                                    st.write("**Outliers Detected:**")
-                                    for col, count in stats["outliers"].items():
-                                        st.write(f"- {col}: {count} outliers")
-                        
-                        # Anomaly Detection
-                        if "anomalies" in analysis_results:
-                            with st.expander("🚨 Anomaly Detection"):
-                                for anomaly in analysis_results["anomalies"]:
-                                    st.warning(anomaly)
-                        
-                        # Clustering Results
-                        if "clustering" in analysis_results:
-                            with st.expander("🎯 Cluster Analysis"):
-                                clustered_df = analysis_results["clustering"]
-                                st.write(f"Data grouped into {clustered_df['Cluster'].nunique()} clusters")
-                                
-                                cluster_summary = clustered_df.groupby('Cluster').size()
-                                st.bar_chart(cluster_summary)
-                    
-                    # Action buttons
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        if st.button("🔖 Bookmark Query"):
-                            bookmark = {
-                                "question": user_question,
-                                "query": generated_query,
-                                "timestamp": datetime.now()
-                            }
-                            st.session_state.bookmarked_queries.append(bookmark)
-                            st.success("Query bookmarked!")
-                    
-                    with col2:
-                        if st.button("📊 Add to Dashboard") and not results_df.empty:
-                            viz_config = analysis_results.get("visualization")
-                            create_dashboard_item(user_question, generated_query, results_df, 
-                                                 analysis_results.get("viz_config"))
-                            st.success("Added to dashboard!")
-                    
-                    with col3:
-                        if st.button("📥 Export Results") and not results_df.empty:
-                            csv = results_df.to_csv(index=False)
-                            st.download_button(
-                                label="Download CSV",
-                                data=csv,
-                                file_name=f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                mime="text/csv"
-                            )
-                    
-                    with col4:
-                        if st.button("🔄 Suggest Follow-ups"):
-                            suggestions = suggest_follow_up_questions(user_question, results_df, analysis_results)
-                            if suggestions:
-                                st.write("**Suggested follow-up questions:**")
-                                for suggestion in suggestions:
-                                    if st.button(suggestion, key=f"followup_{suggestion}"):
-                                        st.session_state.template_question = suggestion
-                                        st.rerun()
-                    
-                    # Show technical details
-                    with st.expander("🔍 Technical Details"):
-                        st.subheader("Generated SQL Query")
-                        st.code(generated_query, language="sql")
-                        
-                        st.subheader("Raw Query Results")
-                        if not results_df.empty:
-                            st.dataframe(results_df, use_container_width=True)
-                        else:
-                            st.text("No data returned")
-                        
-                        if analysis_results:
-                            st.subheader("Analysis Metadata")
-                            st.json({k: str(v)[:200] + "..." if len(str(v)) > 200 else str(v) 
-                                    for k, v in analysis_results.items() if k != "visualization"})
-
-                except Exception as e:
-                    error_msg = f"❌ Enhanced processing failed: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.history.add_ai_message(error_msg)
-                    traceback.print_exc()
-                    
+if 'db' in st.session_state:
+    # Check if there's a template question to use
+    default_question = st.session_state.get('template_question', '')
+    
+    # If there's a template question, show it and process it automatically
+    if default_question:
+        st.info(f"Using template question: {default_question}")
+        user_question = default_question
+        del st.session_state.template_question
     else:
-        st.info("👆 Please upload your data files using the sidebar to get started!")
+        # Use chat input without the unsupported value parameter
+        user_question = st.chat_input("Ask a question about your data...")
+    
+    if user_question:
+        st.session_state.history.add_user_message(user_question)
+        with st.chat_message("user"):
+            st.markdown(user_question)
+
+        with st.chat_message("assistant"):
+            try:
+                response, generated_query, results_df, analysis_results = process_question_enhanced(
+                    user_question, 
+                    st.session_state.db,
+                    st.session_state.schema_description
+                )
+                
+                st.markdown(response)
+                st.session_state.history.add_ai_message(response)
+                
+                # Display analysis results
+                if analysis_results:
+                    
+                    # Visualization
+                    if "visualization" in analysis_results:
+                        st.plotly_chart(analysis_results["visualization"], use_container_width=True)
+                    
+                    # Statistical Analysis
+                    if "statistics" in analysis_results:
+                        with st.expander("📊 Statistical Analysis"):
+                            stats = analysis_results["statistics"]
+                            
+                            if "descriptive" in stats:
+                                st.write("**Descriptive Statistics:**")
+                                desc_df = pd.DataFrame(stats["descriptive"])
+                                st.dataframe(desc_df, use_container_width=True)
+                            
+                            if "strong_correlations" in stats and stats["strong_correlations"]:
+                                st.write("**Strong Correlations Found:**")
+                                for corr in stats["strong_correlations"]:
+                                    st.write(f"- {corr['col1']} ↔ {corr['col2']}: {corr['correlation']:.3f}")
+                            
+                            if "outliers" in stats and stats["outliers"]:
+                                st.write("**Outliers Detected:**")
+                                for col, count in stats["outliers"].items():
+                                    st.write(f"- {col}: {count} outliers")
+                    
+                    # Anomaly Detection
+                    if "anomalies" in analysis_results:
+                        with st.expander("🚨 Anomaly Detection"):
+                            for anomaly in analysis_results["anomalies"]:
+                                st.warning(anomaly)
+                    
+                    # Clustering Results
+                    if "clustering" in analysis_results:
+                        with st.expander("🎯 Cluster Analysis"):
+                            clustered_df = analysis_results["clustering"]
+                            st.write(f"Data grouped into {clustered_df['Cluster'].nunique()} clusters")
+                            
+                            cluster_summary = clustered_df.groupby('Cluster').size()
+                            st.bar_chart(cluster_summary)
+                
+                # Action buttons
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    if st.button("🔖 Bookmark Query"):
+                        bookmark = {
+                            "question": user_question,
+                            "query": generated_query,
+                            "timestamp": datetime.now()
+                        }
+                        st.session_state.bookmarked_queries.append(bookmark)
+                        st.success("Query bookmarked!")
+                
+                with col2:
+                    if st.button("📊 Add to Dashboard") and not results_df.empty:
+                        viz_config = analysis_results.get("visualization")
+                        create_dashboard_item(user_question, generated_query, results_df, 
+                                             analysis_results.get("viz_config"))
+                        st.success("Added to dashboard!")
+                
+                with col3:
+                    if st.button("📥 Export Results") and not results_df.empty:
+                        csv = results_df.to_csv(index=False)
+                        st.download_button(
+                            label="Download CSV",
+                            data=csv,
+                            file_name=f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv"
+                        )
+                
+                with col4:
+                    if st.button("🔄 Suggest Follow-ups"):
+                        suggestions = suggest_follow_up_questions(user_question, results_df, analysis_results)
+                        if suggestions:
+                            st.write("**Suggested follow-up questions:**")
+                            for suggestion in suggestions:
+                                if st.button(suggestion, key=f"followup_{suggestion}"):
+                                    st.session_state.template_question = suggestion
+                                    st.rerun()
+                
+                # Show technical details
+                with st.expander("🔍 Technical Details"):
+                    st.subheader("Generated SQL Query")
+                    st.code(generated_query, language="sql")
+                    
+                    st.subheader("Raw Query Results")
+                    if not results_df.empty:
+                        st.dataframe(results_df, use_container_width=True)
+                    else:
+                        st.text("No data returned")
+                    
+                    if analysis_results:
+                        st.subheader("Analysis Metadata")
+                        st.json({k: str(v)[:200] + "..." if len(str(v)) > 200 else str(v) 
+                                for k, v in analysis_results.items() if k != "visualization"})
+
+            except Exception as e:
+                error_msg = f"❌ Enhanced processing failed: {str(e)}"
+                st.error(error_msg)
+                st.session_state.history.add_ai_message(error_msg)
+                traceback.print_exc()
+                
+else:
+    st.info("👆 Please upload your data files using the sidebar to get started!")
 
 with tab2:
     display_dashboard()
