@@ -1450,4 +1450,4 @@ with tab1:
                                     st.download_button(
                                         label="Download CSV",
                                         data=csv,
-                                        file_name=f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')"}
+                                        file_name=f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
