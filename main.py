@@ -615,7 +615,7 @@ def generate_enhanced_query(question: str, db, schema_description, context: List
                 st.write(f"- {step}")
         
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             temperature=0.0,
             max_output_tokens=1000,
             google_api_key=st.secrets["GOOGLE_API_KEY"],
