@@ -127,6 +127,17 @@ def get_column_summary(df, col):
         "duplicate_count": duplicate_count,
         "summary": f"- {col}: {col_type}{value_range}{date_format}{categorical_info} | Nulls: {null_percentage:.1f}% | Sample: {sample_values}"
     }
+def debug_dashboard():
+    """Debug function to check dashboard state"""
+    st.write("### Debug Info")
+    st.write(f"Dashboard items count: {len(st.session_state.dashboard_items)}")
+    if st.session_state.dashboard_items:
+        st.write("Items:")
+        for i, item in enumerate(st.session_state.dashboard_items):
+            st.write(f"- Item {i}: {item.get('title', 'No title')} (ID: {item.get('id', 'No ID')})")
+    
+    if st.button("Show Raw Dashboard Data", key="debug_dashboard"):
+        st.json(st.session_state.dashboard_items)
 
 def detect_relationships(dfs: Dict[str, pd.DataFrame]) -> Dict[str, List[str]]:
     """Detect potential relationships between tables"""
