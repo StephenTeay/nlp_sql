@@ -53,6 +53,8 @@ if 'dashboard_items' not in st.session_state:
     st.session_state.dashboard_items = []
 if 'data_quality_report' not in st.session_state:
     st.session_state.data_quality_report = {}
+if 'last_query_data' not in st.session_state:
+    st.session_state.last_query_data = {}
 
 # --- Helper Functions ---
 
@@ -127,17 +129,6 @@ def get_column_summary(df, col):
         "duplicate_count": duplicate_count,
         "summary": f"- {col}: {col_type}{value_range}{date_format}{categorical_info} | Nulls: {null_percentage:.1f}% | Sample: {sample_values}"
     }
-def debug_dashboard():
-    """Debug function to check dashboard state"""
-    st.write("### Debug Info")
-    st.write(f"Dashboard items count: {len(st.session_state.dashboard_items)}")
-    if st.session_state.dashboard_items:
-        st.write("Items:")
-        for i, item in enumerate(st.session_state.dashboard_items):
-            st.write(f"- Item {i}: {item.get('title', 'No title')} (ID: {item.get('id', 'No ID')})")
-    
-    if st.button("Show Raw Dashboard Data", key="debug_dashboard"):
-        st.json(st.session_state.dashboard_items)
 
 def detect_relationships(dfs: Dict[str, pd.DataFrame]) -> Dict[str, List[str]]:
     """Detect potential relationships between tables"""
@@ -217,15 +208,15 @@ def optimize_query_suggestions(query: str, table_info: Dict) -> List[str]:
     
     # Suggest LIMIT if not present and no aggregation
     if 'LIMIT' not in query_upper and not any(agg in query_upper for agg in ['COUNT', 'SUM', 'AVG', 'MAX', 'MIN', 'GROUP BY']):
-        suggestions.append("💡 Consider adding LIMIT to avoid large result sets")
+        suggestions.append("Consider adding LIMIT to avoid large result sets")
     
     # Suggest WHERE clause for large tables
     if 'WHERE' not in query_upper:
-        suggestions.append("💡 Consider adding WHERE clause to filter results")
+        suggestions.append("Consider adding WHERE clause to filter results")
     
     # Check for SELECT *
     if 'SELECT *' in query_upper:
-        suggestions.append("💡 Consider selecting specific columns instead of *")
+        suggestions.append("Consider selecting specific columns instead of *")
     
     return suggestions
 
@@ -395,6 +386,7 @@ def create_visualization_safe(df: pd.DataFrame, viz_config: Dict):
         return None
     
     return None
+
 def perform_statistical_analysis(df: pd.DataFrame) -> Dict:
     """Perform basic statistical analysis"""
     analysis = {}
@@ -640,13 +632,13 @@ def generate_enhanced_query(question: str, db, schema_description, context: List
         # Check for cached result
         cached_result = get_cached_result(question)
         if cached_result:
-            st.info("📋 Using cached result")
+            st.info("Using cached result")
             return cached_result
         
         # Decompose complex queries
         query_steps = decompose_complex_query(question)
         if query_steps:
-            st.info("🔄 Breaking down complex question into steps:")
+            st.info("Breaking down complex question into steps:")
             for step in query_steps:
                 st.write(f"- {step}")
         
@@ -734,7 +726,7 @@ SQL Query:
         return generated_query
         
     except Exception as e:
-        st.warning(f"⚠️ Enhanced query generation failed: {str(e)}")
+        st.warning(f"Enhanced query generation failed: {str(e)}")
         # Fallback to simple generation
         return generate_fallback_query(question, available_tables)
 
@@ -770,34 +762,34 @@ def generate_fallback_query(question, available_tables):
 def process_question_enhanced(question: str, db, schema_description):
     """Enhanced question processing with all new features - Fixed return values"""
     try:
-        st.write("🔍 Step 1: Analyzing database schema...")
+        st.write("Analyzing database schema...")
         
         available_tables = db.get_usable_table_names()
-        st.write(f"📋 Found tables: {', '.join(available_tables)}")
+        st.write(f"Found tables: {', '.join(available_tables)}")
         
-        st.write("🤖 Step 2: Generating enhanced SQL query...")
+        st.write("Generating enhanced SQL query...")
         
         # Generate query with context
         context = st.session_state.conversation_context[-3:] if st.session_state.conversation_context else []
         generated_query = generate_enhanced_query(question, db, schema_description, context)
         
-        st.write(f"📝 Generated query: {generated_query}")
+        st.write(f"Generated query: {generated_query}")
         
         # Validate query
         is_valid, validation_msg = validate_sql_query(generated_query, available_tables)
         if not is_valid:
-            st.error(f"❌ Query validation failed: {validation_msg}")
+            st.error(f"Query validation failed: {validation_msg}")
             # Return 4 values consistently - including empty analysis_results
             return f"Query validation failed: {validation_msg}", generated_query, pd.DataFrame(), {}
         
         # Get optimization suggestions
         suggestions = optimize_query_suggestions(generated_query, st.session_state.get('table_info', {}))
         if suggestions:
-            with st.expander("💡 Query Optimization Suggestions"):
+            with st.expander("Query Optimization Suggestions"):
                 for suggestion in suggestions:
                     st.write(suggestion)
         
-        st.write("🔧 Step 3: Executing query...")
+        st.write("Executing query...")
         
         # Initialize results_df to avoid UnboundLocalError
         results_df = pd.DataFrame()
@@ -805,10 +797,10 @@ def process_question_enhanced(question: str, db, schema_description):
         try:
             execute_query_tool = QuerySQLDatabaseTool(db=db)
             query_results = execute_query_tool.invoke({"query": generated_query})
-            st.write("✅ Query executed successfully")
+            st.write("Query executed successfully")
         
         except Exception as e:
-            st.warning(f"⚠️ LangChain execution failed, trying direct SQLite...")
+            st.warning(f"LangChain execution failed, trying direct SQLite...")
             
             try:
                 db_path = db.database_uri.replace('sqlite:///', '')
@@ -829,17 +821,17 @@ def process_question_enhanced(question: str, db, schema_description):
                     results_df = pd.DataFrame()
                 
                 conn.close()
-                st.write("✅ Direct SQLite execution successful")
+                st.write("Direct SQLite execution successful")
             
             except Exception as e2:
-                st.error(f"❌ Both execution methods failed: {str(e2)[:200]}")
+                st.error(f"Both execution methods failed: {str(e2)[:200]}")
                 # Return 4 values consistently
                 return f"Execution Error: {e2}", generated_query, pd.DataFrame(), {}
         
         # Process results
         if isinstance(query_results, str):
             if "Error" in query_results:
-                final_answer = f"❌ Query execution failed: {query_results}"
+                final_answer = f"Query execution failed: {query_results}"
                 results_df = pd.DataFrame()
             else:
                 final_answer = query_results
@@ -861,16 +853,16 @@ def process_question_enhanced(question: str, db, schema_description):
                     results_df = pd.DataFrame()
                 
                 if not results_df.empty:
-                    final_answer = f"📊 **Results for '{question}':**\n\n"
+                    final_answer = f"**Results for '{question}':**\n\n"
                     final_answer += results_df.to_markdown(index=False)
                 else:
                     final_answer = "No results found for your query."
                     
             except Exception as e:
-                final_answer = f"📊 **Results for '{question}':**\n\n{str(query_results)[:1000]}"
+                final_answer = f"**Results for '{question}':**\n\n{str(query_results)[:1000]}"
                 results_df = pd.DataFrame()
         
-        st.write("📈 Step 4: Advanced Analysis...")
+        st.write("Advanced Analysis...")
         
         # Perform advanced analysis if we have meaningful data
         analysis_results = {}
@@ -879,14 +871,14 @@ def process_question_enhanced(question: str, db, schema_description):
             # Generate visualization
             viz_config = generate_visualization(results_df, generated_query, question)
             if viz_config:
-                st.write("📊 Creating visualization...")
-                fig = create_visualization(results_df, viz_config)
+                st.write("Creating visualization...")
+                fig = create_visualization_safe(results_df, viz_config)
                 if fig:
                     analysis_results["visualization"] = fig
             
             # Statistical analysis
             if len(results_df.select_dtypes(include=[np.number]).columns) > 0:
-                st.write("📊 Performing statistical analysis...")
+                st.write("Performing statistical analysis...")
                 stats_analysis = perform_statistical_analysis(results_df)
                 analysis_results["statistics"] = stats_analysis
                 
@@ -922,63 +914,17 @@ def process_question_enhanced(question: str, db, schema_description):
         if len(st.session_state.conversation_context) > 10:
             st.session_state.conversation_context = st.session_state.conversation_context[-10:]
         
-        st.write("✅ Enhanced processing complete!")
+        st.write("Enhanced processing complete!")
         
         # Always return exactly 4 values
         return final_answer, generated_query, results_df, analysis_results
         
     except Exception as e:
-        error_msg = f"❌ Error in enhanced processing: {str(e)}"
+        error_msg = f"Error in enhanced processing: {str(e)}"
         st.error(error_msg)
         traceback.print_exc()
         # Always return exactly 4 values, even in error cases
         return error_msg, "", pd.DataFrame(), {}
-def validate_sql_query(query: str, available_tables: List[str]) -> Tuple[bool, str]:
-    """Validate SQL query before execution"""
-    # Clean and normalize the query first
-    query_clean = query.strip()
-    if not query_clean:
-        return False, "Empty query provided"
-    
-    # Remove common prefixes that might interfere
-    if query_clean.startswith("```sql"):
-        query_clean = query_clean[6:].strip()
-    elif query_clean.startswith("```"):
-        query_clean = query_clean[3:].strip()
-    
-    # Remove trailing ```
-    if query_clean.endswith("```"):
-        query_clean = query_clean[:-3].strip()
-    
-    query_upper = query_clean.upper()
-    
-    # Basic syntax checks - be more flexible with whitespace and formatting
-    query_start = query_upper.lstrip()  # Remove leading whitespace
-    if not query_start.startswith(('SELECT', 'WITH')):
-        return False, f"Only SELECT queries are allowed for security reasons. Query starts with: '{query_clean[:20]}...'"
-    
-    # Check for dangerous keywords
-    dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'TRUNCATE']
-    for keyword in dangerous_keywords:
-        if keyword in query_upper:
-            return False, f"Query contains potentially dangerous keyword: {keyword}"
-    
-    # Check if query is too complex (basic heuristic)
-    if query_clean.count('SELECT') > 5:
-        return False, "Query appears to be too complex. Please simplify."
-    
-    # Check for table existence - make this more lenient
-    if available_tables:
-        table_referenced = False
-        for table in available_tables:
-            if table.lower() in query_clean.lower():
-                table_referenced = True
-                break
-        
-        if not table_referenced:
-            return False, f"Query should reference at least one of these tables: {', '.join(available_tables)}"
-    
-    return True, "Query validation passed"
 
 def suggest_follow_up_questions(question: str, results_df: pd.DataFrame, analysis: Dict) -> List[str]:
     """Generate intelligent follow-up question suggestions"""
@@ -1025,24 +971,35 @@ def suggest_follow_up_questions(question: str, results_df: pd.DataFrame, analysi
     return suggestions[:5]  # Limit to 5 suggestions
 
 def create_dashboard_item(question: str, query: str, results_df: pd.DataFrame, viz_config: Dict = None):
-    """Add item to dashboard with unique ID generation"""
-    import uuid
-    
-    dashboard_item = {
-        "id": str(uuid.uuid4()),  # Use UUID instead of len() for unique IDs
-        "timestamp": datetime.now(),
-        "question": question,
-        "query": query,
-        "data": results_df.to_dict('records') if not results_df.empty else [],
-        "viz_config": viz_config,
-        "title": question[:50] + "..." if len(question) > 50 else question
-    }
-    
-    st.session_state.dashboard_items.append(dashboard_item)
-    
+    """Add item to dashboard with proper error handling and debugging"""
+    try:
+        import uuid
+        
+        # Ensure dashboard_items exists
+        if 'dashboard_items' not in st.session_state:
+            st.session_state.dashboard_items = []
+        
+        dashboard_item = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(),
+            "question": question,
+            "query": query,
+            "data": results_df.to_dict('records') if not results_df.empty else [],
+            "viz_config": viz_config,
+            "title": question[:50] + "..." if len(question) > 50 else question
+        }
+        
+        st.session_state.dashboard_items.append(dashboard_item)
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Failed to add to dashboard: {str(e)}")
+        return False
+
 def display_dashboard():
     """Display dashboard with saved items and better error handling"""
-    st.header("📊 Your Data Dashboard")
+    st.header("Your Data Dashboard")
     
     if not st.session_state.dashboard_items:
         st.info("No dashboard items yet. Add queries to your dashboard using the 'Add to Dashboard' button.")
@@ -1112,8 +1069,161 @@ def display_dashboard_item(item: Dict):
         
         st.divider()
 
-# --- Query Templates ---
+def display_query_history():
+    """Display query history with search and filtering"""
+    st.header("Query History")
+    
+    if not st.session_state.query_history:
+        st.info("No queries in history yet. Start asking questions to build your history.")
+        return
+    
+    # History controls
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        search_term = st.text_input("Search history", placeholder="Search questions or queries...")
+    with col2:
+        if st.button("Clear History", type="secondary"):
+            st.session_state.query_history = []
+            st.rerun()
+    
+    # Filter history
+    filtered_history = st.session_state.query_history
+    if search_term:
+        filtered_history = [
+            h for h in st.session_state.query_history
+            if search_term.lower() in h['question'].lower() or search_term.lower() in h['query'].lower()
+        ]
+    
+    st.write(f"Showing {len(filtered_history)} of {len(st.session_state.query_history)} queries")
+    
+    # Display history items
+    for i, item in enumerate(filtered_history):
+        with st.expander(f"{item['timestamp'].strftime('%Y-%m-%d %H:%M')} - {item['question'][:60]}..."):
+            st.write(f"**Question:** {item['question']}")
+            st.code(item['query'], language='sql')
+            st.write(f"**Result Preview:** {item['result_preview']}")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("Rerun Query", key=f"rerun_{i}"):
+                    if 'db' in st.session_state:
+                        st.session_state.template_question = item['question']
+                        st.switch_page("main")  # Switch back to query tab
+            with col2:
+                if st.button("Bookmark", key=f"bookmark_hist_{i}"):
+                    bookmark = {
+                        "question": item['question'],
+                        "query": item['query'],
+                        "timestamp": datetime.now()
+                    }
+                    if bookmark not in st.session_state.bookmarked_queries:
+                        st.session_state.bookmarked_queries.append(bookmark)
+                        st.success("Bookmarked!")
+            with col3:
+                if st.button("Delete", key=f"delete_hist_{i}"):
+                    st.session_state.query_history.remove(item)
+                    st.rerun()
 
+def display_data_quality_report():
+    """Display comprehensive data quality report"""
+    st.header("Data Quality Report")
+    
+    if not st.session_state.data_quality_report:
+        st.info("No data quality report available. Upload data files to generate a report.")
+        return
+    
+    # Overall summary
+    total_tables = len(st.session_state.data_quality_report)
+    total_columns = sum(len(cols) for cols in st.session_state.data_quality_report.values())
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Tables", total_tables)
+    with col2:
+        st.metric("Total Columns", total_columns)
+    with col3:
+        # Calculate average data quality score
+        quality_scores = []
+        for table_cols in st.session_state.data_quality_report.values():
+            for col_info in table_cols.values():
+                # Simple quality score based on null percentage
+                score = 100 - col_info['null_percentage']
+                quality_scores.append(score)
+        avg_quality = np.mean(quality_scores) if quality_scores else 0
+        st.metric("Avg Quality Score", f"{avg_quality:.1f}%")
+    
+    st.divider()
+    
+    # Detailed table analysis
+    for table_name, columns_info in st.session_state.data_quality_report.items():
+        with st.expander(f"Table: {table_name}", expanded=True):
+            
+            # Table metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Columns", len(columns_info))
+            with col2:
+                total_rows = columns_info[list(columns_info.keys())[0]]['total_count']
+                st.metric("Rows", total_rows)
+            with col3:
+                null_percentages = [col['null_percentage'] for col in columns_info.values()]
+                avg_null = np.mean(null_percentages)
+                st.metric("Avg Nulls", f"{avg_null:.1f}%")
+            with col4:
+                data_types = [col['type'] for col in columns_info.values()]
+                unique_types = len(set(data_types))
+                st.metric("Data Types", unique_types)
+            
+            # Column details
+            st.subheader("Column Analysis")
+            
+            # Create detailed DataFrame
+            col_data = []
+            for col_name, col_info in columns_info.items():
+                col_data.append({
+                    'Column': col_name,
+                    'Type': col_info['type'],
+                    'Non-Null Count': col_info['non_null_count'],
+                    'Null %': f"{col_info['null_percentage']:.1f}%",
+                    'Unique Values': col_info['unique_count'],
+                    'Duplicates': col_info['duplicate_count'],
+                    'Sample': str(col_info['sample'][:2])  # Show first 2 samples
+                })
+            
+            df_quality = pd.DataFrame(col_data)
+            st.dataframe(df_quality, use_container_width=True)
+            
+            # Identify quality issues
+            issues = []
+            for col_name, col_info in columns_info.items():
+                if col_info['null_percentage'] > 50:
+                    issues.append(f"High null rate in {col_name}: {col_info['null_percentage']:.1f}%")
+                if col_info['duplicate_count'] > col_info['total_count'] * 0.8:
+                    issues.append(f"High duplicate rate in {col_name}")
+                if col_info['unique_count'] == 1:
+                    issues.append(f"Constant value in {col_name}")
+            
+            if issues:
+                st.subheader("Data Quality Issues")
+                for issue in issues:
+                    st.warning(issue)
+            else:
+                st.success("No major data quality issues detected!")
+    
+    # Recommendations
+    st.subheader("Recommendations")
+    recommendations = [
+        "Consider handling missing values in columns with high null rates",
+        "Investigate duplicate records for data accuracy",
+        "Validate data types for consistency",
+        "Check for outliers in numeric columns",
+        "Ensure proper date formatting for time-based analysis"
+    ]
+    
+    for rec in recommendations:
+        st.write(f"• {rec}")
+
+# Query Templates
 QUERY_TEMPLATES = {
     "Data Overview": [
         "Show me the first 10 rows",
@@ -1147,8 +1257,7 @@ QUERY_TEMPLATES = {
     ]
 }
 
-# --- Main Streamlit UI ---
-
+# Main Streamlit UI
 # Page configuration
 st.set_page_config(
     page_title="Enhanced NL-to-SQL Analyzer",
@@ -1157,16 +1266,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("📊 Enhanced Natural Language to SQL Analyzer")
+st.title("Enhanced Natural Language to SQL Analyzer")
 st.write("Upload your data files, ask questions, and get intelligent insights with advanced analytics!")
 
 # Main navigation
-tab1, tab2, tab3, tab4 = st.tabs(["🔍 Query Interface", "📊 Dashboard", "📋 History", "📈 Data Quality"])
+tab1, tab2, tab3, tab4 = st.tabs(["Query Interface", "Dashboard", "History", "Data Quality"])
 
 with tab1:
     # Sidebar for file uploads
     with st.sidebar:
-        st.header("📁 Upload Your Data")
+        st.header("Upload Your Data")
         
         upload_option = st.radio(
             "Choose your data source:",
@@ -1189,7 +1298,7 @@ with tab1:
                 with st.spinner("Creating enhanced database from CSV files..."):
                     try:
                         db_path, table_info, schema_description = create_database_from_csv_files(csv_files)
-                        st.success(f"✅ Created database with {len(csv_files)} tables!")
+                        st.success(f"Created database with {len(csv_files)} tables!")
                         
                         with st.expander("View Table Information"):
                             st.text(table_info)
@@ -1211,7 +1320,7 @@ with tab1:
                 with st.spinner("Creating enhanced database from Excel file..."):
                     try:
                         db_path, table_info, schema_description = create_database_from_excel(excel_file)
-                        st.success("✅ Created database from Excel file!")
+                        st.success("Created database from Excel file!")
                         
                         with st.expander("View Table Information"):
                             st.text(table_info)
@@ -1239,13 +1348,13 @@ with tab1:
                 with st.spinner("Creating enhanced database from Excel file..."):
                     try:
                         db_path, table_info, schema_description = create_database_from_excel(excel_file)
-                        st.success("✅ Created database from Excel file!")
+                        st.success("Created database from Excel file!")
                         
                         if sql_file:
                             with st.spinner("Executing SQL file..."):
                                 try:
                                     sql_results = execute_sql_file(sql_file, db_path)
-                                    st.success("✅ SQL file executed!")
+                                    st.success("SQL file executed!")
                                     
                                     with st.expander("SQL Execution Results"):
                                         st.text(sql_results)
@@ -1262,7 +1371,7 @@ with tab1:
                         st.error(f"Error creating database: {e}")
         
         # Query Templates Section
-        st.header("📝 Query Templates")
+        st.header("Query Templates")
         selected_category = st.selectbox("Choose a category:", list(QUERY_TEMPLATES.keys()))
         
         if selected_category:
@@ -1273,7 +1382,7 @@ with tab1:
         
         # Bookmarked Queries
         if st.session_state.bookmarked_queries:
-            st.header("🔖 Bookmarked Queries")
+            st.header("Bookmarked Queries")
             for i, bookmark in enumerate(st.session_state.bookmarked_queries):
                 col1, col2 = st.columns([4, 1])
                 with col1:
@@ -1295,16 +1404,16 @@ with tab1:
                 st.session_state.processed_files = set()
             st.session_state.processed_files.add(db_path)
             
-            st.success("🎉 Enhanced database ready! You can now ask questions with advanced analytics.")
+            st.success("Enhanced database ready! You can now ask questions with advanced analytics.")
             
             try:
                 available_tables = st.session_state.db.get_usable_table_names()
-                st.info(f"📋 Available tables: {', '.join(available_tables)}")
+                st.info(f"Available tables: {', '.join(available_tables)}")
             except:
                 pass
                 
         except Exception as e:
-            st.error(f"❌ Error connecting to database: {e}")
+            st.error(f"Error connecting to database: {e}")
             if 'db' in st.session_state:
                 del st.session_state.db
 
@@ -1321,254 +1430,212 @@ with tab1:
                 st.markdown(msg.content)
 
     # Handle user input
-if 'db' in st.session_state:
-    # Check if there's a template question to use
-    default_question = st.session_state.get('template_question', '')
-    
-    # If there's a template question, show it and process it automatically
-    if default_question:
-        st.info(f"Using template question: {default_question}")
-        user_question = default_question
-        del st.session_state.template_question
-    else:
-        # Use chat input without the unsupported value parameter
-        user_question = st.chat_input("Ask a question about your data...")
-    
-    if user_question:
-        st.session_state.history.add_user_message(user_question)
-        with st.chat_message("user"):
-            st.markdown(user_question)
-
-        with st.chat_message("assistant"):
-            try:
-                response, generated_query, results_df, analysis_results = process_question_enhanced(
-                    user_question, 
-                    st.session_state.db,
-                    st.session_state.schema_description
-                )
-                
-                st.markdown(response)
-                st.session_state.history.add_ai_message(response)
-                
-                # Display analysis results
-                if analysis_results:
-                    
-                    # Visualization
-                    if "visualization" in analysis_results:
-                        st.plotly_chart(analysis_results["visualization"], use_container_width=True)
-                    
-                    # Statistical Analysis
-                    if "statistics" in analysis_results:
-                        with st.expander("📊 Statistical Analysis"):
-                            stats = analysis_results["statistics"]
-                            
-                            if "descriptive" in stats:
-                                st.write("**Descriptive Statistics:**")
-                                desc_df = pd.DataFrame(stats["descriptive"])
-                                st.dataframe(desc_df, use_container_width=True)
-                            
-                            if "strong_correlations" in stats and stats["strong_correlations"]:
-                                st.write("**Strong Correlations Found:**")
-                                for corr in stats["strong_correlations"]:
-                                    st.write(f"- {corr['col1']} ↔ {corr['col2']}: {corr['correlation']:.3f}")
-                            
-                            if "outliers" in stats and stats["outliers"]:
-                                st.write("**Outliers Detected:**")
-                                for col, count in stats["outliers"].items():
-                                    st.write(f"- {col}: {count} outliers")
-                    
-                    # Anomaly Detection
-                    if "anomalies" in analysis_results:
-                        with st.expander("🚨 Anomaly Detection"):
-                            for anomaly in analysis_results["anomalies"]:
-                                st.warning(anomaly)
-                    
-                    # Clustering Results
-                    if "clustering" in analysis_results:
-                        with st.expander("🎯 Cluster Analysis"):
-                            clustered_df = analysis_results["clustering"]
-                            st.write(f"Data grouped into {clustered_df['Cluster'].nunique()} clusters")
-                            
-                            cluster_summary = clustered_df.groupby('Cluster').size()
-                            st.bar_chart(cluster_summary)
-                
-                # Action buttons
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    if st.button("🔖 Bookmark Query"):
-                        bookmark = {
-                            "question": user_question,
-                            "query": generated_query,
-                            "timestamp": datetime.now()
-                        }
-                        st.session_state.bookmarked_queries.append(bookmark)
-                        st.success("Query bookmarked!")
-                
-                with col2:
-                    if st.button("📊 Add to Dashboard") and not results_df.empty:
-                        viz_config = generate_visualization(results_df, generated_query, user_question)
-                        create_dashboard_item(user_question, generated_query, results_df, viz_config)
-                        st.success("Added to dashboard!")
-                        st.rerun()
-    
-        # Generate viz_config properly for dashboard storage
+    if 'db' in st.session_state:
+        # Check if there's a template question to use
+        default_question = st.session_state.get('template_question', '')
         
-                
-                with col3:
-                    if st.button("📥 Export Results") and not results_df.empty:
-                        csv = results_df.to_csv(index=False)
-                        st.download_button(
-                            label="Download CSV",
-                            data=csv,
-                            file_name=f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
-                
-                with col4:
-                    if st.button("🔄 Suggest Follow-ups"):
-                        suggestions = suggest_follow_up_questions(user_question, results_df, analysis_results)
-                        if suggestions:
-                            st.write("**Suggested follow-up questions:**")
-                            for suggestion in suggestions:
-                                if st.button(suggestion, key=f"followup_{suggestion}"):
-                                    st.session_state.template_question = suggestion
-                                    st.rerun()
-                
-                # Show technical details
-                with st.expander("🔍 Technical Details"):
-                    st.subheader("Generated SQL Query")
-                    st.code(generated_query, language="sql")
-                    
-                    st.subheader("Raw Query Results")
-                    if not results_df.empty:
-                        st.dataframe(results_df, use_container_width=True)
-                    else:
-                        st.text("No data returned")
-                    
-                    if analysis_results:
-                        st.subheader("Analysis Metadata")
-                        st.json({k: str(v)[:200] + "..." if len(str(v)) > 200 else str(v) 
-                                for k, v in analysis_results.items() if k != "visualization"})
+        # If there's a template question, show it and process it automatically
+        if default_question:
+            st.info(f"Using template question: {default_question}")
+            user_question = default_question
+            del st.session_state.template_question
+        else:
+            # Use chat input
+            user_question = st.chat_input("Ask a question about your data...")
+        
+        if user_question:
+            st.session_state.history.add_user_message(user_question)
+            with st.chat_message("user"):
+                st.markdown(user_question)
 
-            except Exception as e:
-                error_msg = f"❌ Enhanced processing failed: {str(e)}"
-                st.error(error_msg)
-                st.session_state.history.add_ai_message(error_msg)
-                traceback.print_exc()
+            with st.chat_message("assistant"):
+                try:
+                    response, generated_query, results_df, analysis_results = process_question_enhanced(
+                        user_question, 
+                        st.session_state.db,
+                        st.session_state.schema_description
+                    )
+                    
+                    # Store in session state for button access
+                    st.session_state.last_query_data = {
+                        'question': user_question,
+                        'query': generated_query,
+                        'results_df': results_df.copy() if not results_df.empty else pd.DataFrame(),
+                        'analysis_results': analysis_results,
+                        'response': response
+                    }
+                    
+                    st.markdown(response)
+                    st.session_state.history.add_ai_message(response)
+                    
+                    # Display analysis results
+                    if analysis_results:
+                        
+                        # Visualization
+                        if "visualization" in analysis_results:
+                            st.plotly_chart(analysis_results["visualization"], use_container_width=True)
+                        
+                        # Statistical Analysis
+                        if "statistics" in analysis_results:
+                            with st.expander("Statistical Analysis"):
+                                stats = analysis_results["statistics"]
+                                
+                                if "descriptive" in stats:
+                                    st.write("**Descriptive Statistics:**")
+                                    desc_df = pd.DataFrame(stats["descriptive"])
+                                    st.dataframe(desc_df, use_container_width=True)
+                                
+                                if "strong_correlations" in stats and stats["strong_correlations"]:
+                                    st.write("**Strong Correlations Found:**")
+                                    for corr in stats["strong_correlations"]:
+                                        st.write(f"- {corr['col1']} ↔ {corr['col2']}: {corr['correlation']:.3f}")
+                                
+                                if "outliers" in stats and stats["outliers"]:
+                                    st.write("**Outliers Detected:**")
+                                    for col, count in stats["outliers"].items():
+                                        st.write(f"- {col}: {count} outliers")
+                        
+                        # Anomaly Detection
+                        if "anomalies" in analysis_results:
+                            with st.expander("Anomaly Detection"):
+                                for anomaly in analysis_results["anomalies"]:
+                                    st.warning(anomaly)
+                        
+                        # Clustering Results
+                        if "clustering" in analysis_results:
+                            with st.expander("Cluster Analysis"):
+                                clustered_df = analysis_results["clustering"]
+                                st.write(f"Data grouped into {clustered_df['Cluster'].nunique()} clusters")
+                                
+                                cluster_summary = clustered_df.groupby('Cluster').size()
+                                st.bar_chart(cluster_summary)
+                    
+                    # Suggest follow-up questions
+                    follow_up_questions = suggest_follow_up_questions(user_question, results_df, analysis_results)
+                    if follow_up_questions:
+                        st.subheader("Suggested Follow-up Questions")
+                        for i, suggestion in enumerate(follow_up_questions):
+                            if st.button(suggestion, key=f"followup_{i}"):
+                                st.session_state.template_question = suggestion
+                                st.rerun()
+                    
+                    # Action buttons
+                    st.write("---")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        if st.button("Bookmark Query", key="bookmark_btn"):
+                            try:
+                                bookmark = {
+                                    "question": st.session_state.last_query_data['question'],
+                                    "query": st.session_state.last_query_data['query'],
+                                    "timestamp": datetime.now()
+                                }
+                                st.session_state.bookmarked_queries.append(bookmark)
+                                st.success("Query bookmarked!")
+                            except Exception as e:
+                                st.error(f"Error bookmarking: {str(e)}")
+                    
+                    with col2:
+                        # Check if we have data to add to dashboard
+                        has_data = (
+                            'last_query_data' in st.session_state and 
+                            isinstance(st.session_state.last_query_data.get('results_df'), pd.DataFrame) and
+                            not st.session_state.last_query_data['results_df'].empty
+                        )
+                        
+                        if st.button("Add to Dashboard", key="dashboard_btn", disabled=not has_data):
+                            if has_data:
+                                try:
+                                    query_data = st.session_state.last_query_data
+                                    
+                                    # Generate visualization config
+                                    viz_config = generate_visualization(
+                                        query_data['results_df'], 
+                                        query_data['query'], 
+                                        query_data['question']
+                                    )
+                                    
+                                    # Create dashboard item
+                                    success = create_dashboard_item(
+                                        query_data['question'],
+                                        query_data['query'],
+                                        query_data['results_df'],
+                                        viz_config
+                                    )
+                                    
+                                    if success:
+                                        st.success("Added to dashboard!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error("Failed to add to dashboard")
+                                        
+                                except Exception as e:
+                                    st.error(f"Error adding to dashboard: {str(e)}")
+                            else:
+                                st.error("No data available to add to dashboard")
+                    
+                    with col3:
+                        has_data = (
+                            'last_query_data' in st.session_state and 
+                            isinstance(st.session_state.last_query_data.get('results_df'), pd.DataFrame) and
+                            not st.session_state.last_query_data['results_df'].empty
+                        )
+                        
+                        if st.button("Export Results", key="export_btn", disabled=not has_data):
+                            if has_data:
+                                try:
+                                    csv = st.session_state.last_query_data['results_df'].to_csv(index=False)
+                                    st.download_button(
+                                        label="Download CSV",
+                                        data=csv,
+                                        file_name=f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                        mime='text/csv'
+                                    )
+                                except Exception as e:
+                                    st.error(f"Error exporting: {str(e)}")
+                    
+                    with col4:
+                        if st.button("Share Query", key="share_btn"):
+                            if 'last_query_data' in st.session_state:
+                                query_data = st.session_state.last_query_data
+                                share_text = f"Question: {query_data['question']}\n\nSQL Query:\n{query_data['query']}"
+                                st.text_area("Share this query:", value=share_text, height=150)
                 
-else:
-    st.info("👆 Please upload your data files using the sidebar to get started!")
+                except Exception as e:
+                    st.error(f"Error processing question: {str(e)}")
+                    traceback.print_exc()
+    else:
+        st.info("Please upload data files using the sidebar to get started.")
 
 with tab2:
-    debug_dashboard()
     display_dashboard()
 
 with tab3:
-    st.header("📋 Query History")
-    
-    if not st.session_state.query_history:
-        st.info("No query history yet. Start asking questions to build your history.")
-    else:
-        # History controls
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            search_term = st.text_input("Search history:", placeholder="Type to filter queries...")
-        with col2:
-            if st.button("Clear History", type="secondary"):
-                st.session_state.query_history = []
-                st.success("History cleared!")
-                st.rerun()
-        
-        # Filter history
-        filtered_history = st.session_state.query_history
-        if search_term:
-            filtered_history = [h for h in st.session_state.query_history 
-                              if search_term.lower() in h['question'].lower()]
-        
-        # Display history
-        for i, hist_item in enumerate(filtered_history):
-            with st.expander(f"{hist_item['timestamp'].strftime('%Y-%m-%d %H:%M')} - {hist_item['question'][:60]}..."):
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.write("**Question:**", hist_item['question'])
-                    st.code(hist_item['query'], language="sql")
-                    st.write("**Result Preview:**", hist_item['result_preview'])
-                
-                with col2:
-                    if st.button("Re-run Query", key=f"rerun_{i}"):
-                        st.session_state.template_question = hist_item['question']
-                        st.switch_page("Query Interface")
-                    
-                    if st.button("Bookmark", key=f"bookmark_hist_{i}"):
-                        bookmark = {
-                            "question": hist_item['question'],
-                            "query": hist_item['query'],
-                            "timestamp": datetime.now()
-                        }
-                        st.session_state.bookmarked_queries.append(bookmark)
-                        st.success("Bookmarked!")
+    display_query_history()
 
 with tab4:
-    st.header("📈 Data Quality Report")
+    display_data_quality_report()
+
+# Footer
+st.markdown("---")
+st.markdown("**Enhanced NL-to-SQL Analyzer** - Powered by Google Gemini AI and advanced analytics")
+
+# Cache management in sidebar
+with st.sidebar:
+    if st.session_state.query_cache:
+        st.write("---")
+        st.header("Cache Management")
+        st.write(f"Cached queries: {len(st.session_state.query_cache)}")
+        if st.button("Clear Cache"):
+            st.session_state.query_cache = {}
+            st.success("Cache cleared!")
     
-    if not st.session_state.data_quality_report:
-        st.info("Upload data files to see quality analysis.")
-    else:
-        for table_name, columns_info in st.session_state.data_quality_report.items():
-            st.subheader(f"Table: {table_name}")
-            
-            # Create quality summary
-            total_cols = len(columns_info)
-            high_null_cols = sum(1 for col_info in columns_info.values() if col_info['null_percentage'] > 20)
-            duplicate_cols = sum(1 for col_info in columns_info.values() if col_info['duplicate_count'] > 0)
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Columns", total_cols)
-            with col2:
-                st.metric("High Null Columns", high_null_cols)
-            with col3:
-                st.metric("Columns with Duplicates", duplicate_cols)
-            with col4:
-                avg_null = np.mean([col_info['null_percentage'] for col_info in columns_info.values()])
-                st.metric("Avg Null %", f"{avg_null:.1f}%")
-            
-            # Detailed column analysis
-            with st.expander(f"Detailed Analysis - {table_name}"):
-                quality_data = []
-                for col_name, col_info in columns_info.items():
-                    quality_data.append({
-                        "Column": col_name,
-                        "Type": col_info['type'],
-                        "Null %": f"{col_info['null_percentage']:.1f}%",
-                        "Unique Values": col_info['unique_count'],
-                        "Duplicates": col_info['duplicate_count'],
-                        "Data Quality": "⚠️ High Nulls" if col_info['null_percentage'] > 20 else 
-                                       "⚠️ Many Duplicates" if col_info['duplicate_count'] > col_info['total_count'] * 0.5 else "✅ Good"
-                    })
-                
-                quality_df = pd.DataFrame(quality_data)
-                st.dataframe(quality_df, use_container_width=True)
-            
-            st.write("---")
-
-# Footer controls
-st.write("---")
-col1, col2, col3 = st.columns([2, 2, 1])
-
-with col1:
-    if st.button("🔄 Reset Conversation"):
-        st.session_state.history = ChatMessageHistory()
-        st.session_state.conversation_context = []
-        st.success("Conversation reset!")
-
-with col2:
-    if st.button("🗑️ Clear All Cache"):
-        st.session_state.query_cache = {}
-        st.success("Cache cleared!")
-
-with col3:
-    cache_size = len(st.session_state.query_cache)
-    st.caption(f"Cache: {cache_size} items")
+    # Performance metrics
+    if st.session_state.query_history:
+        st.write("---")
+        st.header("Performance")
+        st.metric("Total Queries", len(st.session_state.query_history))
+        st.metric("Bookmarked", len(st.session_state.bookmarked_queries))
+        st.metric("Dashboard Items", len(st.session_state.dashboard_items))
