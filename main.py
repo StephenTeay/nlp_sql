@@ -1461,6 +1461,7 @@ else:
     st.info("👆 Please upload your data files using the sidebar to get started!")
 
 with tab2:
+    debug_dashboard()
     display_dashboard()
 
 with tab3:
