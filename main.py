@@ -314,51 +314,76 @@ def generate_visualization(df: pd.DataFrame, query: str, question: str) -> Optio
     
     return viz_config if viz_config["type"] else None
 
-def create_visualization(df: pd.DataFrame, viz_config: Dict):
-    """Create and display visualization"""
+def create_visualization_safe(df: pd.DataFrame, viz_config: Dict):
+    """Safe visualization creation with comprehensive error handling"""
+    if not viz_config or not viz_config.get("type"):
+        return None
+        
     try:
-        if viz_config["type"] == "time_series":
-            df_plot = df.copy()
-            df_plot[viz_config["config"]["x"]] = pd.to_datetime(df_plot[viz_config["config"]["x"]])
-            fig = px.line(df_plot, 
-                         x=viz_config["config"]["x"], 
-                         y=viz_config["config"]["y"],
-                         title=viz_config["config"]["title"])
+        viz_type = viz_config["type"]
+        config = viz_config.get("config", {})
         
-        elif viz_config["type"] == "bar":
-            fig = px.bar(df, 
-                        x=viz_config["config"]["x"], 
-                        y=viz_config["config"]["y"],
-                        title=viz_config["config"]["title"])
+        if viz_type == "time_series":
+            if config.get("x") in df.columns and config.get("y") in df.columns:
+                df_plot = df.copy()
+                try:
+                    df_plot[config["x"]] = pd.to_datetime(df_plot[config["x"]])
+                    fig = px.line(df_plot, 
+                                 x=config["x"], 
+                                 y=config["y"],
+                                 title=config.get("title", "Time Series"))
+                except:
+                    return None
+            else:
+                return None
         
-        elif viz_config["type"] == "histogram":
-            fig = px.histogram(df, 
-                              x=viz_config["config"]["x"],
-                              title=viz_config["config"]["title"])
+        elif viz_type == "bar":
+            if config.get("x") in df.columns and config.get("y") in df.columns:
+                fig = px.bar(df, 
+                            x=config["x"], 
+                            y=config["y"],
+                            title=config.get("title", "Bar Chart"))
+            else:
+                return None
         
-        elif viz_config["type"] == "scatter":
-            fig = px.scatter(df, 
-                            x=viz_config["config"]["x"], 
-                            y=viz_config["config"]["y"],
-                            title=viz_config["config"]["title"])
+        elif viz_type == "histogram":
+            if config.get("x") in df.columns:
+                fig = px.histogram(df, 
+                                  x=config["x"],
+                                  title=config.get("title", "Histogram"))
+            else:
+                return None
         
-        elif viz_config["type"] == "pie":
-            fig = go.Figure(data=[go.Pie(
-                labels=viz_config["config"]["names"],
-                values=viz_config["config"]["values"]
-            )])
-            fig.update_layout(title=viz_config["config"]["title"])
+        elif viz_type == "scatter":
+            if config.get("x") in df.columns and config.get("y") in df.columns:
+                fig = px.scatter(df, 
+                                x=config["x"], 
+                                y=config["y"],
+                                title=config.get("title", "Scatter Plot"))
+            else:
+                return None
         
+        elif viz_type == "pie":
+            if "values" in config and "names" in config:
+                fig = go.Figure(data=[go.Pie(
+                    labels=config["names"],
+                    values=config["values"]
+                )])
+                fig.update_layout(title=config.get("title", "Pie Chart"))
+            else:
+                return None
         else:
             return None
         
-        fig.update_layout(height=400)
-        return fig
-    
+        if 'fig' in locals():
+            fig.update_layout(height=400)
+            return fig
+        
     except Exception as e:
-        st.warning(f"Could not create visualization: {str(e)}")
+        st.error(f"Visualization error: {str(e)}")
         return None
-
+    
+    return None
 def perform_statistical_analysis(df: pd.DataFrame) -> Dict:
     """Perform basic statistical analysis"""
     analysis = {}
@@ -989,48 +1014,58 @@ def suggest_follow_up_questions(question: str, results_df: pd.DataFrame, analysi
     return suggestions[:5]  # Limit to 5 suggestions
 
 def create_dashboard_item(question: str, query: str, results_df: pd.DataFrame, viz_config: Dict = None):
-    """Add item to dashboard"""
+    """Add item to dashboard with unique ID generation"""
+    import uuid
+    
     dashboard_item = {
-        "id": len(st.session_state.dashboard_items),
+        "id": str(uuid.uuid4()),  # Use UUID instead of len() for unique IDs
         "timestamp": datetime.now(),
         "question": question,
         "query": query,
         "data": results_df.to_dict('records') if not results_df.empty else [],
-        "viz_config": viz_config,  # Store the viz_config, not the figure
+        "viz_config": viz_config,
         "title": question[:50] + "..." if len(question) > 50 else question
     }
     
     st.session_state.dashboard_items.append(dashboard_item)
     
 def display_dashboard():
-    """Display dashboard with saved items"""
+    """Display dashboard with saved items and better error handling"""
+    st.header("📊 Your Data Dashboard")
+    
     if not st.session_state.dashboard_items:
         st.info("No dashboard items yet. Add queries to your dashboard using the 'Add to Dashboard' button.")
         return
     
-    st.header("📊 Your Data Dashboard")
-    
     # Dashboard controls
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         layout = st.selectbox("Layout", ["Single Column", "Two Columns"], key="dashboard_layout")
     with col2:
-        if st.button("Clear Dashboard", type="secondary"):
+        if st.button("Clear Dashboard", type="secondary", key="clear_dashboard"):
             st.session_state.dashboard_items = []
             st.rerun()
+    with col3:
+        st.metric("Total Items", len(st.session_state.dashboard_items))
     
-    # Display items
-    if layout == "Two Columns":
-        cols = st.columns(2)
-        for i, item in enumerate(st.session_state.dashboard_items):
-            with cols[i % 2]:
+    st.divider()
+    
+    # Display items with error handling
+    try:
+        if layout == "Two Columns":
+            cols = st.columns(2)
+            for i, item in enumerate(st.session_state.dashboard_items):
+                with cols[i % 2]:
+                    display_dashboard_item(item)
+        else:
+            for item in st.session_state.dashboard_items:
                 display_dashboard_item(item)
-    else:
-        for item in st.session_state.dashboard_items:
-            display_dashboard_item(item)
+    except Exception as e:
+        st.error(f"Error displaying dashboard items: {str(e)}")
+        st.info("Try clearing the dashboard and adding items again.")
 
 def display_dashboard_item(item: Dict):
-    """Display individual dashboard item"""
+    """Display individual dashboard item with unique keys"""
     with st.container():
         st.subheader(item["title"])
         st.caption(f"Added: {item['timestamp'].strftime('%Y-%m-%d %H:%M')}")
@@ -1040,27 +1075,31 @@ def display_dashboard_item(item: Dict):
             
             # Show visualization if available
             if item["viz_config"]:
-                fig = create_visualization(df, item["viz_config"])
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                try:
+                    fig = create_visualization_safe(df, item["viz_config"])
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True, key=f"viz_{item['id']}")
+                except Exception as e:
+                    st.error(f"Could not create visualization: {str(e)}")
             
             # Show data table
-            with st.expander("View Data"):
-                st.dataframe(df, use_container_width=True)
+            with st.expander(f"View Data - {item['id'][:8]}", key=f"data_exp_{item['id']}"):
+                st.dataframe(df, use_container_width=True, key=f"df_{item['id']}")
             
-            # Controls
+            # Controls with unique keys
             col1, col2 = st.columns(2)
             with col1:
-                if st.button(f"Refresh {item['id']}", key=f"refresh_{item['id']}"):
+                if st.button(f"Refresh", key=f"refresh_{item['id']}"):
                     st.info("Refresh functionality would re-run the query")
             with col2:
-                if st.button(f"Remove {item['id']}", key=f"remove_{item['id']}"):
+                if st.button(f"Remove", key=f"remove_{item['id']}"):
+                    # Use list comprehension to remove item
                     st.session_state.dashboard_items = [
                         x for x in st.session_state.dashboard_items if x["id"] != item["id"]
                     ]
                     st.rerun()
         
-        st.write("---")
+        st.divider()
 
 # --- Query Templates ---
 
@@ -1360,6 +1399,7 @@ if 'db' in st.session_state:
                         viz_config = generate_visualization(results_df, generated_query, user_question)
                         create_dashboard_item(user_question, generated_query, results_df, viz_config)
                         st.success("Added to dashboard!")
+                        st.rerun()
     
         # Generate viz_config properly for dashboard storage
         
